@@ -18,11 +18,13 @@ class BorderTitle {
   }) : textSpan = null;
 
   /// Creates a border title with rich text (multiple styles).
+  /// When [style] is provided, it overrides the border style for the title's
+  /// leading/trailing padding spaces. Children still use their own styles.
   const BorderTitle.rich({
     required InlineSpan this.textSpan,
     this.alignment = TitleAlignment.left,
-  })  : text = '',
-        style = null;
+    this.style,
+  })  : text = '';
 
   /// Plain text for the title. Used when [textSpan] is null.
   final String text;
