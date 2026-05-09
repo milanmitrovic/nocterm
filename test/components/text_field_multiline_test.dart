@@ -86,6 +86,52 @@ void main() {
       );
     });
 
+    test('Alt+Enter keeps inserting newlines past maxLines', () async {
+      // Regression: TextField._insertText used to silently drop a '\n'
+      // insertion once the content reached maxLines lines. With viewport
+      // scrolling now in place, maxLines bounds the visible window, not
+      // the content — newline insertion must keep working.
+      await testNocterm(
+        'newline past maxLines',
+        (tester) async {
+          // Pre-fill 5 lines so we're already at maxLines=5.
+          final controller = TextEditingController(text: 'a\nb\nc\nd\ne');
+          controller.selection =
+              TextSelection.collapsed(offset: controller.text.length);
+
+          await tester.pumpComponent(
+            Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 20,
+                height: 5,
+                child: TextField(
+                  controller: controller,
+                  maxLines: 5,
+                  focused: true,
+                  showCursor: true,
+                  cursorBlinkRate: null,
+                ),
+              ),
+            ),
+          );
+
+          // Send Alt+Enter — should insert a newline even though we're
+          // already at maxLines.
+          await tester.sendKeyEvent(const KeyboardEvent(
+            logicalKey: LogicalKey.enter,
+            modifiers: ModifierKeys(alt: true),
+          ));
+
+          expect(controller.text, 'a\nb\nc\nd\ne\n');
+
+          // Type a character on the new line — it should land there.
+          await tester.enterText('f');
+          expect(controller.text, 'a\nb\nc\nd\ne\nf');
+        },
+      );
+    });
+
     test('cursor stays visible when content exceeds maxLines', () async {
       // Regression: previously TextLayoutEngine truncated to the FIRST
       // maxLines wrapped lines and the cursor was clamped to the last

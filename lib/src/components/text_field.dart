@@ -565,17 +565,9 @@ class _TextFieldState extends State<TextField> {
       }
     }
 
-    // Check max lines for multi-line fields
-    if (component.maxLines != null &&
-        component.maxLines! > 1 &&
-        char.contains('\n')) {
-      final currentLines = text.split('\n').length;
-      final newLines = char.split('\n').length - 1;
-
-      if (currentLines + newLines > component.maxLines!) {
-        return;
-      }
-    }
+    // Note: no maxLines cap on inserted newlines — maxLines bounds the
+    // visible viewport, not the content. The render object scrolls the
+    // cursor row into view when content overflows.
 
     String newText;
     int newOffset;
