@@ -157,6 +157,11 @@ class TextField extends StatefulComponent {
   final bool readOnly;
   final bool obscureText;
   final String obscuringCharacter;
+  /// Bounds the **visible viewport height** in rows, not the maximum
+  /// content size. When the typed text wraps to more rows than [maxLines],
+  /// the field keeps the cursor row in view by scrolling internally —
+  /// content can grow without limit. Pass `1` for a single-line field
+  /// (which scrolls horizontally instead). Use [maxLength] to cap content.
   final int? maxLines;
   final int? minLines;
   final int? maxLength;
