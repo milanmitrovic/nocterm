@@ -86,6 +86,51 @@ void main() {
       );
     });
 
+    test('cursor stays visible when content exceeds maxLines', () async {
+      // Regression: previously TextLayoutEngine truncated to the FIRST
+      // maxLines wrapped lines and the cursor was clamped to the last
+      // visible row, so typing past the bottom of the field looked frozen.
+      // The fix scrolls the viewport so the cursor row stays in view.
+      await testNocterm(
+        'cursor visible past maxLines',
+        (tester) async {
+          final controller = TextEditingController(
+            text: '1\n2\n3\n4\n5\n6\n7\n8',
+          );
+          controller.selection =
+              TextSelection.collapsed(offset: controller.text.length);
+
+          // Wrap in Align so the field gets loose constraints (not the
+          // tight terminal-sized constraints from the test binding) and
+          // the maxLines bound is respected.
+          await tester.pumpComponent(
+            Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 20,
+                height: 5,
+                child: TextField(
+                  controller: controller,
+                  maxLines: 5,
+                  focused: true,
+                  showCursor: true,
+                  cursorBlinkRate: null,
+                ),
+              ),
+            ),
+          );
+
+          // The viewport should have scrolled so the bottom of the text is
+          // visible. '8' is the last typed line; '1' and '2' are above the
+          // scroll window (8 lines total, 5 visible → window is rows 3..7).
+          expect(tester.terminalState, containsText('8'));
+          expect(tester.terminalState, containsText('4'));
+          expect(tester.terminalState, isNot(containsText('1')));
+          expect(tester.terminalState, isNot(containsText('2')));
+        },
+      );
+    });
+
     test('text entry works correctly with wrapped lines', () async {
       await testNocterm(
         'text entry with wrapped lines',

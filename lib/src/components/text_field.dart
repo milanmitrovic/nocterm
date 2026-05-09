@@ -1111,6 +1111,10 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
   TextStyle? _placeholderStyle;
   TextSelection _selection;
   int _viewOffset;
+  // Vertical scroll offset (in laid-out lines) for multi-line fields whose
+  // content exceeds maxLines. The viewport shows lines
+  // [_verticalViewOffset, _verticalViewOffset + visibleHeight).
+  int _verticalViewOffset = 0;
   bool _cursorVisible;
   Color? _cursorColor;
   CursorStyle _cursorStyle;
@@ -1175,6 +1179,7 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
   set selection(TextSelection value) {
     if (_selection != value) {
       _selection = value;
+      _ensureCursorVisible();
       markNeedsPaint();
     }
   }
@@ -1268,6 +1273,7 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
     if (newSelection != _selection) {
       _selection = newSelection;
       _targetVisualColumn = null; // Reset target column
+      _ensureCursorVisible();
       onSelectionChange?.call(newSelection);
       markNeedsPaint();
     }
@@ -1301,6 +1307,7 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
 
     if (newSelection != _selection) {
       _selection = newSelection;
+      _ensureCursorVisible();
       onSelectionChange?.call(newSelection);
       markNeedsPaint();
     }
@@ -1321,6 +1328,7 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
     if (newSelection != _selection) {
       _selection = newSelection;
       _targetVisualColumn = null; // Reset target column
+      _ensureCursorVisible();
       onSelectionChange?.call(newSelection);
       markNeedsPaint();
     }
@@ -1343,6 +1351,7 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
     if (newSelection != _selection) {
       _selection = newSelection;
       _targetVisualColumn = null; // Reset target column
+      _ensureCursorVisible();
       onSelectionChange?.call(newSelection);
       markNeedsPaint();
     }
@@ -1365,6 +1374,7 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
     if (newSelection != _selection) {
       _selection = newSelection;
       _targetVisualColumn = null; // Reset target column
+      _ensureCursorVisible();
       onSelectionChange?.call(newSelection);
       markNeedsPaint();
     }
@@ -1470,8 +1480,13 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
     final textForHitTest =
         _obscureText ? _obscuringCharacter * _text.length : _text;
 
+    // For multi-line fields with vertical scrolling, the visible row 0
+    // corresponds to layout row _verticalViewOffset; shift the y coordinate
+    // back into layout space before hit testing.
+    final adjustedLocalY = localY + _verticalViewOffset;
+
     final charIndex = selection_utils.getCharacterIndexAtLocalPosition(
-      localPos: Offset(localX, localY),
+      localPos: Offset(localX, adjustedLocalY),
       text: textForHitTest,
       lines: _layoutResult?.lines ?? const [],
     );
@@ -1633,22 +1648,68 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
         .clamp(1, double.infinity)
         .toInt(); // Reserve space for cursor
 
+    // For editable multi-line fields we want all wrapped lines so the
+    // render object can scroll the cursor into view; the maxLines bound
+    // is enforced as a viewport cap below, not as a layout truncation.
     final config = TextLayoutConfig(
       softWrap: _maxLines != 1, // Enable wrapping for multi-line fields
       overflow: TextOverflow.clip,
       textAlign: _textAlign,
-      maxLines: _maxLines,
+      maxLines: null,
       maxWidth: maxWidth,
     );
 
     _layoutResult = TextLayoutEngine.layout(textToLayout, config);
 
-    // Size based on actual layout result
-    final actualHeight = _layoutResult!.actualHeight.toDouble();
+    // Size based on actual layout result, capped at maxLines.
+    final layoutHeight = _layoutResult!.actualHeight;
+    final visibleHeight = _maxLines != null
+        ? math.min(layoutHeight, _maxLines!)
+        : layoutHeight;
     size = constraints.constrain(Size(
       constraints.maxWidth,
-      actualHeight,
+      visibleHeight.toDouble(),
     ));
+
+    _ensureCursorVisible();
+  }
+
+  /// Adjust [_verticalViewOffset] so that the cursor row falls inside the
+  /// visible viewport. No-op for single-line fields or when the laid-out
+  /// content fits entirely in the visible height.
+  void _ensureCursorVisible() {
+    if (_layoutResult == null) return;
+    if (_maxLines == 1) {
+      _verticalViewOffset = 0;
+      return;
+    }
+    final visibleHeight = size.height.toInt();
+    if (visibleHeight <= 0) return;
+    final layoutHeight = _layoutResult!.actualHeight;
+    if (layoutHeight <= visibleHeight) {
+      _verticalViewOffset = 0;
+      return;
+    }
+
+    final pos = CursorMovement.getCursorPosition(
+      layoutResult: _layoutResult!,
+      text: _text,
+      cursorOffset: _selection.extentOffset,
+    );
+    final cursorRow = pos.line;
+
+    if (cursorRow < _verticalViewOffset) {
+      _verticalViewOffset = cursorRow;
+    } else if (cursorRow >= _verticalViewOffset + visibleHeight) {
+      _verticalViewOffset = cursorRow - visibleHeight + 1;
+    }
+
+    final maxOffset = layoutHeight - visibleHeight;
+    if (_verticalViewOffset < 0) {
+      _verticalViewOffset = 0;
+    } else if (_verticalViewOffset > maxOffset) {
+      _verticalViewOffset = maxOffset;
+    }
   }
 
   @override
@@ -1664,8 +1725,13 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
     final lines = _layoutResult!.lines;
     final alignmentWidth = size.width.toInt();
 
-    // Paint each line from the layout result
-    for (int i = 0; i < lines.length; i++) {
+    // Visible viewport spans [_verticalViewOffset, end). For single-line or
+    // shorter-than-viewport content, _verticalViewOffset stays 0.
+    final visibleHeight = size.height.toInt();
+    final start = _verticalViewOffset;
+    final end = math.min(start + visibleHeight, lines.length);
+
+    for (int i = start; i < end; i++) {
       final line = lines[i];
 
       // Calculate horizontal offset based on text alignment
@@ -1683,8 +1749,10 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
             isLastLine: false);
       }
 
+      final localY = (i - start).toDouble();
       _paintLineWithSelection(
-          canvas, Offset(xOffset, offset.dy + i), displayLine, textStyle, i);
+          canvas, Offset(xOffset, offset.dy + localY), displayLine, textStyle,
+          i);
     }
 
     // Paint cursor only for the focused field
@@ -1737,8 +1805,18 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
         final textBeforeCursor = line.substring(0, positionInLine);
         final visualColumn = UnicodeWidth.stringWidth(textBeforeCursor);
 
+        // Map full-layout row to viewport row. If the cursor falls outside
+        // the visible window (shouldn't happen because _ensureCursorVisible
+        // runs after every cursor mutation), skip drawing rather than
+        // bleeding above/below the field.
+        final localRow = i - _verticalViewOffset;
+        final visibleHeight = size.height.toInt();
+        if (localRow < 0 || localRow >= visibleHeight) {
+          break;
+        }
+
         final cursorOffset =
-            offset + Offset(visualColumn.toDouble(), i.toDouble());
+            offset + Offset(visualColumn.toDouble(), localRow.toDouble());
 
         // Get the character at cursor position (or space if at end)
         final charAtCursor =
