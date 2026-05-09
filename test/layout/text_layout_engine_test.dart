@@ -61,6 +61,40 @@ void main() {
       });
     });
 
+    group('Space at wrap boundary', () {
+      test('drops space straddling wrap boundary so next line is not indented',
+          () {
+        final config = TextLayoutConfig(
+          maxWidth: 7,
+          softWrap: true,
+        );
+
+        // 'this is' fills the line exactly. The space before 'a' overflows
+        // and previously survived as the start of the next line, producing
+        // [' a test']. The fix drops it so the continuation starts cleanly.
+        final result = TextLayoutEngine.layout('this is a test', config);
+
+        expect(result.lines, ['this is', 'a test']);
+        for (final line in result.lines) {
+          expect(line.startsWith(' '), isFalse,
+              reason: 'wrapped lines must not start with a space');
+        }
+      });
+
+      test('preserves intentional leading space at start of paragraph', () {
+        // A leading space at the start of the input is user content and
+        // should be kept on the first line.
+        final config = TextLayoutConfig(
+          maxWidth: 10,
+          softWrap: true,
+        );
+
+        final result = TextLayoutEngine.layout(' hello world', config);
+
+        expect(result.lines.first.startsWith(' '), isTrue);
+      });
+    });
+
     group('Long word breaking', () {
       test('breaks words longer than max width', () {
         final config = TextLayoutConfig(

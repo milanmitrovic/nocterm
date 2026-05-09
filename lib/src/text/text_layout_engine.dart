@@ -184,7 +184,12 @@ class TextLayoutEngine {
         // Word doesn't fit - start new line
         lines.add(currentLine);
 
-        if (wordWidth > maxWidth) {
+        if (word == ' ') {
+          // A space token that straddles the wrap boundary would otherwise
+          // seed the next line with a leading space, indenting it. Drop it.
+          currentLine = '';
+          currentLineWidth = 0;
+        } else if (wordWidth > maxWidth) {
           // Word is too long for a line by itself
           final brokenWords = _breakLongWord(word, maxWidth);
           for (int i = 0; i < brokenWords.length - 1; i++) {
