@@ -62,47 +62,69 @@ void main() {
       );
     });
 
-    test('Ctrl+A should select all text', () async {
+    test('Ctrl+A moves cursor to start of current line', () async {
       await testNocterm(
-        'select all functionality',
+        'ctrl-A line start',
         (tester) async {
-          final controller = TextEditingController(text: 'Test selection');
+          final controller = TextEditingController(text: 'hello\nworld');
+          // Cursor placed in the middle of the second line ('world').
+          controller.selection = const TextSelection.collapsed(offset: 8);
 
           await tester.pumpComponent(
             Container(
               width: 30,
-              height: 3,
+              height: 4,
               decoration: BoxDecoration(border: BoxBorder.all()),
               child: TextField(
                 controller: controller,
                 focused: true,
-                selectionColor: Colors.cyan,
-                cursorColor: Colors.yellow,
+                maxLines: 3,
               ),
             ),
           );
 
-          print('Initial state:');
-          print('Text: "${controller.text}"');
-          print(
-              'Selection: base=${controller.selection.baseOffset}, extent=${controller.selection.extentOffset}');
-
-          // Select all with Ctrl+A
           await tester.sendKeyEvent(KeyboardEvent(
             logicalKey: LogicalKey.keyA,
-            modifiers: ModifierKeys(ctrl: true),
+            modifiers: const ModifierKeys(ctrl: true),
           ));
 
-          print('\nAfter Ctrl+A:');
-          print(
-              'Selection: base=${controller.selection.baseOffset}, extent=${controller.selection.extentOffset}');
-          print(
-              'Selected text: "${controller.text.substring(controller.selection.start, controller.selection.end)}"');
-
-          expect(controller.selection.start, 0);
-          expect(controller.selection.end, controller.text.length);
+          // Offset 6 = first character of 'world' (after 'hello\n').
+          expect(controller.selection.isCollapsed, isTrue);
+          expect(controller.selection.extentOffset, 6);
         },
-        debugPrintAfterPump: true,
+      );
+    });
+
+    test('Ctrl+E moves cursor to end of current line', () async {
+      await testNocterm(
+        'ctrl-E line end',
+        (tester) async {
+          final controller = TextEditingController(text: 'hello\nworld');
+          // Cursor placed in the middle of the first line ('hello').
+          controller.selection = const TextSelection.collapsed(offset: 2);
+
+          await tester.pumpComponent(
+            Container(
+              width: 30,
+              height: 4,
+              decoration: BoxDecoration(border: BoxBorder.all()),
+              child: TextField(
+                controller: controller,
+                focused: true,
+                maxLines: 3,
+              ),
+            ),
+          );
+
+          await tester.sendKeyEvent(KeyboardEvent(
+            logicalKey: LogicalKey.keyE,
+            modifiers: const ModifierKeys(ctrl: true),
+          ));
+
+          // Offset 5 = end of 'hello', just before the '\n'.
+          expect(controller.selection.isCollapsed, isTrue);
+          expect(controller.selection.extentOffset, 5);
+        },
       );
     });
 

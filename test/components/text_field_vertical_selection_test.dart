@@ -105,13 +105,14 @@ void main() {
             ),
           );
 
-          // Select all text
-          await tester.sendKeyEvent(KeyboardEvent(
-            logicalKey: LogicalKey.keyA,
-            modifiers: ModifierKeys(ctrl: true),
-          ));
+          // Select all text. Ctrl+A is now line-start, so set the
+          // selection directly for this collapse-on-arrow scenario.
+          controller.selection = TextSelection(
+            baseOffset: 0,
+            extentOffset: controller.text.length,
+          );
+          await tester.pump();
 
-          print('After Ctrl+A:');
           print(
               'Selection: base=${controller.selection.baseOffset}, extent=${controller.selection.extentOffset}');
           expect(controller.selection.isCollapsed, false);

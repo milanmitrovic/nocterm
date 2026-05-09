@@ -445,7 +445,12 @@ class _TextFieldState extends State<TextField> {
       _moveCursorToEnd();
       return true;
     } else if (event.matches(LogicalKey.keyA, ctrl: true)) {
-      _selectAll();
+      // Emacs convention: Ctrl+A → beginning of current line.
+      _renderTextField?.moveCursorToLineStart(false);
+      return true;
+    } else if (event.matches(LogicalKey.keyE, ctrl: true)) {
+      // Emacs convention: Ctrl+E → end of current line.
+      _renderTextField?.moveCursorToLineEnd(false);
       return true;
     } else if (event.matches(LogicalKey.keyC, ctrl: true)) {
       _copy();
@@ -799,13 +804,6 @@ class _TextFieldState extends State<TextField> {
     _controller.selection =
         TextSelection.collapsed(offset: _controller.text.length);
     _renderTextField?.resetTargetColumn();
-  }
-
-  void _selectAll() {
-    _controller.selection = TextSelection(
-      baseOffset: 0,
-      extentOffset: _controller.text.length,
-    );
   }
 
   void _copy() {

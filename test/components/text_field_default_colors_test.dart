@@ -21,11 +21,13 @@ void main() {
           ),
         );
 
-        // Select all text
-        await tester.sendKeyEvent(KeyboardEvent(
-          logicalKey: LogicalKey.keyA,
-          modifiers: ModifierKeys(ctrl: true),
-        ));
+        // Select all text. Ctrl+A is now line-start, so set the selection
+        // directly for this default-color visual check.
+        controller.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: controller.text.length,
+        );
+        await tester.pump();
 
         // Verify selection is made
         expect(controller.selection.start, 0);

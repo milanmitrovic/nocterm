@@ -20,12 +20,11 @@ void main() {
               ),
             ),
           );
-
-          // Select all text with Ctrl+A
-          await tester.sendKeyEvent(KeyboardEvent(
-            logicalKey: LogicalKey.keyA,
-            modifiers: const ModifierKeys(ctrl: true),
-          ));
+          // Select all (Ctrl+A is now line-start; set selection directly).
+          controller.selection = TextSelection(
+            baseOffset: 0,
+            extentOffset: controller.text.length,
+          );
           await tester.pump();
 
           // Verify selection works
@@ -54,12 +53,11 @@ void main() {
               ),
             ),
           );
-
-          // Select all text
-          await tester.sendKeyEvent(KeyboardEvent(
-            logicalKey: LogicalKey.keyA,
-            modifiers: const ModifierKeys(ctrl: true),
-          ));
+          // Select all (Ctrl+A is now line-start; set selection directly).
+          controller.selection = TextSelection(
+            baseOffset: 0,
+            extentOffset: controller.text.length,
+          );
           await tester.pump();
 
           // Clear clipboard
@@ -131,12 +129,11 @@ void main() {
               ),
             ),
           );
-
-          // Select all
-          await tester.sendKeyEvent(KeyboardEvent(
-            logicalKey: LogicalKey.keyA,
-            modifiers: const ModifierKeys(ctrl: true),
-          ));
+          // Select all (Ctrl+A is now line-start; set selection directly).
+          controller.selection = TextSelection(
+            baseOffset: 0,
+            extentOffset: controller.text.length,
+          );
           await tester.pump();
 
           // Paste to replace
@@ -169,12 +166,11 @@ void main() {
               ),
             ),
           );
-
-          // Select all
-          await tester.sendKeyEvent(KeyboardEvent(
-            logicalKey: LogicalKey.keyA,
-            modifiers: const ModifierKeys(ctrl: true),
-          ));
+          // Select all (Ctrl+A is now line-start; set selection directly).
+          controller.selection = TextSelection(
+            baseOffset: 0,
+            extentOffset: controller.text.length,
+          );
           await tester.pump();
 
           // Cut (Ctrl+X works, unlike Ctrl+C which is reserved for app termination)

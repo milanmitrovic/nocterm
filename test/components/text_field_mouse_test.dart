@@ -398,11 +398,13 @@ void main() {
               ),
             );
 
-            // Select text via keyboard (Ctrl+A)
-            await tester.sendKeyEvent(KeyboardEvent(
-              logicalKey: LogicalKey.keyA,
-              modifiers: ModifierKeys(ctrl: true),
-            ));
+            // Set a non-collapsed selection directly (Ctrl+A is now bound
+            // to line-start, not select-all).
+            controller.selection = const TextSelection(
+              baseOffset: 0,
+              extentOffset: 11,
+            );
+            await tester.pump();
 
             // Verify selection is active
             expect(controller.selection.isCollapsed, isFalse);
