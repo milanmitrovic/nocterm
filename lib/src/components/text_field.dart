@@ -1146,6 +1146,12 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
   set text(String value) {
     if (_text != value) {
       _text = value;
+      // External text mutation invalidates any "stay in this column" target
+      // accumulated during prior vertical navigation. Without this reset,
+      // a controller.text assignment followed by an Up/Down arrow would
+      // place the cursor at the column the user navigated to in the OLD
+      // text, not at the end of the new text.
+      _targetVisualColumn = null;
       markNeedsLayout();
     }
   }
@@ -1174,6 +1180,12 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
   set selection(TextSelection value) {
     if (_selection != value) {
       _selection = value;
+      // External selection jumps (e.g. controller.selection = ...) reset
+      // the target column the same way the existing horizontal-cursor
+      // movement methods do. Otherwise a stale target from earlier
+      // vertical navigation would survive a recall/clear/reset and pull
+      // the next Up/Down off-column.
+      _targetVisualColumn = null;
       _ensureCursorVisible();
       markNeedsPaint();
     }
