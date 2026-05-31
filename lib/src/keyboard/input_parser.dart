@@ -415,38 +415,88 @@ class InputParser {
       }
     }
 
-    // Modified arrow keys and other sequences (6 bytes: ESC [ 1 ; X Y)
-    if (_buffer.length >= 6) {
-      final sequence = String.fromCharCodes(_buffer);
-
-      // Modified arrow/home/end keys: ESC [ 1 ; {modifier} A/B/C/D/H/F
-      // Modifier is 1 + bitmask (shift=1, alt=2, ctrl=4, meta=8).
-      // Handles all combinations: Shift(2), Alt(3), Alt+Shift(4), Ctrl(5),
-      // Ctrl+Shift(6), Ctrl+Alt(7), Ctrl+Alt+Shift(8), etc.
-      if (sequence.startsWith('\x1B[1;') && _buffer.length == 6) {
-        final modValue = int.tryParse(String.fromCharCode(_buffer[4]));
-        if (modValue != null) {
-          final modifiers = _decodeModifiers(modValue);
-          final LogicalKey? key;
-          switch (_buffer[5]) {
-            case 0x41: key = LogicalKey.arrowUp;
-            case 0x42: key = LogicalKey.arrowDown;
-            case 0x43: key = LogicalKey.arrowRight;
-            case 0x44: key = LogicalKey.arrowLeft;
-            case 0x48: key = LogicalKey.home;
-            case 0x46: key = LogicalKey.end;
-            default: key = null;
-          }
-          if (key != null) {
-            return (KeyboardEvent(logicalKey: key, modifiers: modifiers), 6);
-          }
-        }
+    // Modified cursor / edit keys: ESC [ 1 ; <modifier> <final>, where <final>
+    // is A/B/C/D (arrows) or H/F (home/end). The modifier is 1 + bitmask and
+    // may be MULTI-DIGIT: terminals implementing the kitty keyboard protocol or
+    // xterm modifyOtherKeys fold the lock bits into it, so an UNMODIFIED arrow
+    // with num lock on arrives as CSI 1;129 A (129 = 1 + 128; bit 128 =
+    // num_lock, bit 64 = caps_lock). _decodeModifiers reads only the
+    // shift/alt/ctrl/meta bits, so such lock-only modifiers decode to "no
+    // modifier" and the key resolves to a plain arrow.
+    //
+    // The previous implementation assumed a single-digit modifier (fixed
+    // 6-byte length) and silently dropped these longer sequences, which broke
+    // arrow navigation under kitty whenever num/caps lock was active.
+    if (_buffer.length >= 4 && _buffer[2] == 0x31 && _buffer[3] == 0x3B) {
+      var i = 4;
+      while (i < _buffer.length && _buffer[i] >= 0x30 && _buffer[i] <= 0x39) {
+        i++;
+      }
+      if (i >= _buffer.length) {
+        // Modifier digits not terminated yet — wait for the final byte.
+        return null;
+      }
+      final LogicalKey? key;
+      switch (_buffer[i]) {
+        case 0x41: key = LogicalKey.arrowUp;
+        case 0x42: key = LogicalKey.arrowDown;
+        case 0x43: key = LogicalKey.arrowRight;
+        case 0x44: key = LogicalKey.arrowLeft;
+        case 0x48: key = LogicalKey.home;
+        case 0x46: key = LogicalKey.end;
+        default: key = null;
+      }
+      if (key != null && i > 4) {
+        final modValue =
+            int.tryParse(String.fromCharCodes(_buffer.sublist(4, i))) ?? 1;
+        return (
+          KeyboardEvent(logicalKey: key, modifiers: _decodeModifiers(modValue)),
+          i + 1,
+        );
       }
     }
 
     // Function keys and special keys with ~ terminator
     if (_buffer.contains(0x7E)) {
       final sequence = String.fromCharCodes(_buffer);
+
+      // Modified form: ESC [ <num> ; <modifier> ~ (Insert/Delete/Page*/F-keys
+      // with a modifier). <modifier> is 1 + bitmask and may be multi-digit —
+      // the kitty keyboard protocol folds lock bits in, so e.g. ESC[3;129~ is a
+      // plain Delete with num lock on (129 = 1 + 128). _decodeModifiers ignores
+      // the lock bits, so it resolves to "no modifier".
+      if (_buffer.length >= 4 && _buffer[2] >= 0x30 && _buffer[2] <= 0x39) {
+        var n = 2;
+        while (n < _buffer.length && _buffer[n] >= 0x30 && _buffer[n] <= 0x39) {
+          n++;
+        }
+        if (n < _buffer.length && _buffer[n] == 0x3B) {
+          var m = n + 1;
+          while (m < _buffer.length && _buffer[m] >= 0x30 && _buffer[m] <= 0x39) {
+            m++;
+          }
+          if (m >= _buffer.length) {
+            return null; // modifier digits not terminated yet — wait
+          }
+          if (_buffer[m] == 0x7E) {
+            final keyNum =
+                int.tryParse(String.fromCharCodes(_buffer.sublist(2, n)));
+            final modValue =
+                int.tryParse(String.fromCharCodes(_buffer.sublist(n + 1, m))) ??
+                    1;
+            final key = _tildeKey(keyNum);
+            if (key != null) {
+              return (
+                KeyboardEvent(
+                  logicalKey: key,
+                  modifiers: _decodeModifiers(modValue),
+                ),
+                m + 1,
+              );
+            }
+          }
+        }
+      }
 
       // Parse sequences like ESC [ 2 ~ (Insert), ESC [ 3 ~ (Delete), etc.
       // ESC [ X ~ = 4 bytes
@@ -805,6 +855,26 @@ class InputParser {
       ctrl: (bitmask & 4) != 0,
       meta: (bitmask & 8) != 0,
     );
+  }
+
+  /// Maps a CSI `~`-sequence parameter number to its LogicalKey
+  /// (ESC [ <num> ~). Returns null for unrecognized numbers.
+  LogicalKey? _tildeKey(int? num) {
+    switch (num) {
+      case 2: return LogicalKey.insert;
+      case 3: return LogicalKey.delete;
+      case 5: return LogicalKey.pageUp;
+      case 6: return LogicalKey.pageDown;
+      case 15: return LogicalKey.f5;
+      case 17: return LogicalKey.f6;
+      case 18: return LogicalKey.f7;
+      case 19: return LogicalKey.f8;
+      case 20: return LogicalKey.f9;
+      case 21: return LogicalKey.f10;
+      case 23: return LogicalKey.f11;
+      case 24: return LogicalKey.f12;
+      default: return null;
+    }
   }
 
   /// Convert a Unicode codepoint to a KeyboardEvent with the given modifiers.
