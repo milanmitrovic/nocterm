@@ -423,6 +423,14 @@ class _ListViewportElement extends RenderObjectElement {
         return null;
       }
 
+      // Same instance as the current child component — nothing to update.
+      // Mirrors Element.updateChild's short-circuit: an itemBuilder that
+      // returns cached component instances is legitimate (render caches),
+      // and Element.update asserts newComponent != component.
+      if (identical(existingChild.component, newChild)) {
+        return existingChild;
+      }
+
       // Update existing element if possible
       if (Component.canUpdate(existingChild.component, newChild)) {
         existingChild.update(newChild);
@@ -462,6 +470,11 @@ class _ListViewportElement extends RenderObjectElement {
 
     final separatorIndex = -index - 1; // Use negative indices for separators
     final oldSeparator = _children[separatorIndex];
+
+    // Same instance — nothing to update (see buildChild's identical check).
+    if (oldSeparator != null && identical(oldSeparator.component, separator)) {
+      return oldSeparator;
+    }
 
     if (oldSeparator != null &&
         Component.canUpdate(oldSeparator.component, separator)) {
