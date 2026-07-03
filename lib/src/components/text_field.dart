@@ -1496,6 +1496,7 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
       localPos: Offset(localX, adjustedLocalY),
       text: textForHitTest,
       lines: _layoutResult?.lines ?? const [],
+      lineOffsets: _layoutResult?.lineStartOffsets,
     );
 
     // For single-line fields with horizontal scrolling, the visible text starts
@@ -1781,6 +1782,7 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
       selectionStart: _selection.isCollapsed ? null : _selection.start,
       selectionEnd: _selection.isCollapsed ? null : _selection.end,
       selectionColor: _selectionColor ?? Colors.blue,
+      lineOffsets: _layoutResult?.lineStartOffsets,
     );
   }
 
@@ -1790,60 +1792,40 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
     final cursorColor = _cursorColor ?? Colors.white;
     final lines = _layoutResult!.lines;
 
-    if (_text.isEmpty && _placeholder == null) {
+    if ((_text.isEmpty && _placeholder == null) || lines.isEmpty) {
       // Empty field - show cursor at beginning
       _drawCursorAtPosition(canvas, offset, ' ', 0, cursorColor);
       return;
     }
 
-    // Find which line the cursor is on
-    int charCount = 0;
-    for (int i = 0; i < lines.length; i++) {
-      final line = lines[i];
-      final lineLength = line.length;
+    // CursorMovement owns the offset→line mapping; it uses the layout
+    // engine's per-line source offsets, which account for newline
+    // separators and spaces dropped at wrap boundaries.
+    final pos = CursorMovement.getCursorPosition(
+      layoutResult: _layoutResult!,
+      text: _text,
+      cursorOffset: _selection.extentOffset,
+    );
 
-      // Check if cursor is on this line
-      if (charCount + lineLength >= _selection.extentOffset ||
-          i == lines.length - 1) {
-        final positionInLine =
-            (_selection.extentOffset - charCount).clamp(0, lineLength);
-
-        // Calculate visual position using Unicode width
-        final textBeforeCursor = line.substring(0, positionInLine);
-        final visualColumn = UnicodeWidth.stringWidth(textBeforeCursor);
-
-        // Map full-layout row to viewport row. If the cursor falls outside
-        // the visible window (shouldn't happen because _ensureCursorVisible
-        // runs after every cursor mutation), skip drawing rather than
-        // bleeding above/below the field.
-        final localRow = i - _verticalViewOffset;
-        final visibleHeight = size.height.toInt();
-        if (localRow < 0 || localRow >= visibleHeight) {
-          break;
-        }
-
-        final cursorOffset =
-            offset + Offset(visualColumn.toDouble(), localRow.toDouble());
-
-        // Get the character at cursor position (or space if at end)
-        final charAtCursor =
-            positionInLine < line.length ? line[positionInLine] : ' ';
-
-        _drawCursorAtPosition(
-            canvas, cursorOffset, charAtCursor, positionInLine, cursorColor);
-        break;
-      }
-
-      charCount += lineLength;
-      // Only add 1 for actual newline characters, not wrapped lines
-      // Check if the accumulated text so far ends with a newline
-      if (i < lines.length - 1) {
-        final textSoFar = _text.substring(0, math.min(charCount, _text.length));
-        if (textSoFar.endsWith('\n')) {
-          charCount++; // Account for the newline character
-        }
-      }
+    // Map full-layout row to viewport row. If the cursor falls outside
+    // the visible window (shouldn't happen because _ensureCursorVisible
+    // runs after every cursor mutation), skip drawing rather than
+    // bleeding above/below the field.
+    final localRow = pos.line - _verticalViewOffset;
+    final visibleHeight = size.height.toInt();
+    if (localRow < 0 || localRow >= visibleHeight) {
+      return;
     }
+
+    final cursorOffset =
+        offset + Offset(pos.visualColumn.toDouble(), localRow.toDouble());
+
+    // Get the character at cursor position (or space if at end)
+    final line = lines[pos.line];
+    final charAtCursor = pos.column < line.length ? line[pos.column] : ' ';
+
+    _drawCursorAtPosition(
+        canvas, cursorOffset, charAtCursor, pos.column, cursorColor);
   }
 
   void _drawCursorAtPosition(

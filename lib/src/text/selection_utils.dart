@@ -14,6 +14,12 @@ import '../utils/unicode_width.dart';
 /// wrapping applied and without embedded `\n` characters. This helper advances
 /// past newline characters in [text] so empty lines (consecutive `\n`s) map to
 /// distinct offsets.
+///
+/// NOTE: this reconstruction cannot account for characters the layout engine
+/// dropped at a wrap boundary (a space straddling the wrap) — offsets drift
+/// by one per dropped character. When a `TextLayoutResult` is available,
+/// pass its authoritative `lineStartOffsets` to the functions below via the
+/// `lineOffsets` parameter instead of relying on this fallback.
 List<int> lineStartOffsets(String text, List<String> lines) {
   final offsets = <int>[];
   int offset = 0;
@@ -28,15 +34,22 @@ List<int> lineStartOffsets(String text, List<String> lines) {
 }
 
 /// Maps a local position (x, y) to a character index within [text].
+///
+/// [lineOffsets] — authoritative per-line source offsets from the layout
+/// engine (`TextLayoutResult.lineStartOffsets`). When omitted, offsets are
+/// reconstructed from line lengths, which is wrong after a wrap-dropped
+/// space; pass them whenever a layout result is available.
 int getCharacterIndexAtLocalPosition({
   required Offset localPos,
   required String text,
   required List<String> lines,
+  List<int>? lineOffsets,
 }) {
   if (lines.isEmpty) return 0;
 
   final lineIndex = localPos.dy.toInt().clamp(0, lines.length - 1);
-  final lineStartOffset = lineStartOffsets(text, lines)[lineIndex];
+  final starts = lineOffsets ?? lineStartOffsets(text, lines);
+  final lineStartOffset = starts[lineIndex];
   final line = lines[lineIndex];
   final targetX = localPos.dx;
 
@@ -55,6 +68,11 @@ int getCharacterIndexAtLocalPosition({
 }
 
 /// Paints a single line of text with optional selection highlighting.
+///
+/// [lineOffsets] — authoritative per-line source offsets from the layout
+/// engine (`TextLayoutResult.lineStartOffsets`). When omitted, offsets are
+/// reconstructed from line lengths, which is wrong after a wrap-dropped
+/// space; pass them whenever a layout result is available.
 void paintTextWithSelection({
   required TerminalCanvas canvas,
   required Offset offset,
@@ -66,6 +84,7 @@ void paintTextWithSelection({
   required int? selectionStart,
   required int? selectionEnd,
   required Color selectionColor,
+  List<int>? lineOffsets,
 }) {
   if (selectionStart == null ||
       selectionEnd == null ||
@@ -74,10 +93,10 @@ void paintTextWithSelection({
     return;
   }
 
+  final starts = lineOffsets ??
+      (lines.isNotEmpty ? lineStartOffsets(text, lines) : const <int>[]);
   final lineStartOffset =
-      (lines.isNotEmpty && lineIndex > 0 && lineIndex < lines.length)
-          ? lineStartOffsets(text, lines)[lineIndex]
-          : 0;
+      (lineIndex >= 0 && lineIndex < starts.length) ? starts[lineIndex] : 0;
   final lineEndOffset = lineStartOffset + line.length;
 
   final selStart = math.min(selectionStart, selectionEnd);

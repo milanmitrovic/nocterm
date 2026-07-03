@@ -163,4 +163,119 @@ void main() {
       expect(offset, 29); // End of second line
     });
   });
+
+  group('CursorMovement with wrap-dropped spaces', () {
+    // 'this is a test' at maxWidth 7 lays out as ['this is', 'a test'].
+    // The space at offset 7 straddles the wrap boundary and is dropped from
+    // the layout lines, so layout line 1 starts at text offset 8 — not 7.
+    // Offset mapping must account for the dropped character or every
+    // position after the wrap is off by one.
+    final text = 'this is a test';
+    final layoutResult = TextLayoutEngine.layout(
+      text,
+      TextLayoutConfig(softWrap: true, maxWidth: 7),
+    );
+
+    test('layout drops the boundary space (precondition)', () {
+      expect(layoutResult.lines, ['this is', 'a test']);
+    });
+
+    test('cursor at start of continuation word maps to column 0', () {
+      // Offset 8 is the 'a' — the first character of layout line 1.
+      final pos = CursorMovement.getCursorPosition(
+        layoutResult: layoutResult,
+        text: text,
+        cursorOffset: 8,
+      );
+      expect(pos.line, 1);
+      expect(pos.column, 0);
+      expect(pos.visualColumn, 0);
+      expect(pos.lineStartOffset, 8);
+    });
+
+    test('cursor on the dropped space itself stays at end of first line', () {
+      // Offset 7 is the dropped space. It belongs to neither layout line;
+      // visually the cursor sits after 'this is'.
+      final pos = CursorMovement.getCursorPosition(
+        layoutResult: layoutResult,
+        text: text,
+        cursorOffset: 7,
+      );
+      expect(pos.line, 0);
+      expect(pos.column, 7);
+    });
+
+    test('vertical movement across the dropped space keeps the column', () {
+      // From 'i' in 'this' (offset 2, visual column 2) moving down should
+      // land on 't' of 'test' — offset 8 + 2 = 10 — not offset 9.
+      final newOffset = CursorMovement.moveCursorVertically(
+        layoutResult: layoutResult,
+        text: text,
+        currentOffset: 2,
+        direction: 1,
+        targetVisualColumn: 2,
+      );
+      expect(newOffset, 10);
+    });
+
+    test('line end on continuation line reaches the last character', () {
+      // Line 1 is 'a test' spanning offsets [8, 14).
+      final offset = CursorMovement.moveCursorToLineEnd(
+        layoutResult: layoutResult,
+        text: text,
+        currentOffset: 10,
+      );
+      expect(offset, 14);
+    });
+
+    test('line start on continuation line lands after the dropped space', () {
+      final offset = CursorMovement.moveCursorToLineStart(
+        layoutResult: layoutResult,
+        text: text,
+        currentOffset: 10,
+      );
+      expect(offset, 8);
+    });
+
+    test('mapping stays correct after a newline preceding the wrap', () {
+      // Explicit newline followed by a paragraph that wraps with a dropped
+      // space: both kinds of "invisible" characters must be accounted for.
+      final text2 = 'ab\nthis is a test';
+      final layout2 = TextLayoutEngine.layout(
+        text2,
+        TextLayoutConfig(softWrap: true, maxWidth: 7),
+      );
+      expect(layout2.lines, ['ab', 'this is', 'a test']);
+
+      // Offset 11 is the 'a' of 'a test' (3 for 'ab\n' + 8).
+      final pos = CursorMovement.getCursorPosition(
+        layoutResult: layout2,
+        text: text2,
+        cursorOffset: 11,
+      );
+      expect(pos.line, 2);
+      expect(pos.column, 0);
+    });
+
+    test('consecutive spaces at the boundary drop only the first', () {
+      // 'hello  world' (two spaces) at maxWidth 5: the first space is
+      // dropped at the wrap, the second becomes its own layout line.
+      final text2 = 'hello  world';
+      final layout2 = TextLayoutEngine.layout(
+        text2,
+        TextLayoutConfig(softWrap: true, maxWidth: 5),
+      );
+      expect(layout2.lines, ['hello', ' ', 'world']);
+
+      // Offset 7 = start of 'world'... no: 'hello'(0-5), spaces at 5,6,
+      // 'world' starts at 7.
+      final pos = CursorMovement.getCursorPosition(
+        layoutResult: layout2,
+        text: text2,
+        cursorOffset: 7,
+      );
+      expect(pos.line, 2);
+      expect(pos.column, 0);
+    });
+  });
 }

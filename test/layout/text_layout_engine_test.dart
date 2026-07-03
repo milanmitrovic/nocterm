@@ -95,6 +95,93 @@ void main() {
       });
     });
 
+    group('Line start offsets', () {
+      test('simple wrap where the boundary space survives on the line', () {
+        // 'Hello world test' at width 10 → ['Hello ', 'world test'].
+        // The space after 'Hello' fits, so line 1 starts at offset 6.
+        final result = TextLayoutEngine.layout(
+          'Hello world test',
+          TextLayoutConfig(maxWidth: 10, softWrap: true),
+        );
+
+        expect(result.lines, ['Hello ', 'world test']);
+        expect(result.lineStartOffsets, [0, 6]);
+      });
+
+      test('wrap-dropped space is skipped in the next line offset', () {
+        // 'this is a test' at width 7 → ['this is', 'a test']. The space at
+        // offset 7 straddles the boundary and is dropped from the lines, but
+        // still occupies a source offset — line 1 starts at 8, not 7.
+        final result = TextLayoutEngine.layout(
+          'this is a test',
+          TextLayoutConfig(maxWidth: 7, softWrap: true),
+        );
+
+        expect(result.lines, ['this is', 'a test']);
+        expect(result.lineStartOffsets, [0, 8]);
+      });
+
+      test('consecutive spaces at the boundary drop only the first', () {
+        final result = TextLayoutEngine.layout(
+          'hello  world',
+          TextLayoutConfig(maxWidth: 5, softWrap: true),
+        );
+
+        expect(result.lines, ['hello', ' ', 'world']);
+        expect(result.lineStartOffsets, [0, 6, 7]);
+      });
+
+      test('explicit newlines and empty lines get distinct offsets', () {
+        final result = TextLayoutEngine.layout(
+          'ab\n\ncd',
+          TextLayoutConfig(maxWidth: 20, softWrap: true),
+        );
+
+        expect(result.lines, ['ab', '', 'cd']);
+        expect(result.lineStartOffsets, [0, 3, 4]);
+      });
+
+      test('broken long words keep contiguous offsets', () {
+        final result = TextLayoutEngine.layout(
+          'abcdefgh',
+          TextLayoutConfig(maxWidth: 3, softWrap: true),
+        );
+
+        expect(result.lines, ['abc', 'def', 'gh']);
+        expect(result.lineStartOffsets, [0, 3, 6]);
+      });
+
+      test('newline followed by a wrap-dropped space combines both skips', () {
+        final result = TextLayoutEngine.layout(
+          'ab\nthis is a test',
+          TextLayoutConfig(maxWidth: 7, softWrap: true),
+        );
+
+        expect(result.lines, ['ab', 'this is', 'a test']);
+        expect(result.lineStartOffsets, [0, 3, 11]);
+      });
+
+      test('no-wrap mode offsets advance past newlines', () {
+        final result = TextLayoutEngine.layout(
+          'ab\ncd',
+          TextLayoutConfig(maxWidth: 100, softWrap: false),
+        );
+
+        expect(result.lines, ['ab', 'cd']);
+        expect(result.lineStartOffsets, [0, 3]);
+      });
+
+      test('maxLines truncation keeps offsets parallel to lines', () {
+        final result = TextLayoutEngine.layout(
+          'a\nb\nc\nd',
+          TextLayoutConfig(maxWidth: 20, softWrap: true, maxLines: 2),
+        );
+
+        expect(result.lines, ['a', 'b']);
+        expect(result.lineStartOffsets, [0, 2]);
+      });
+    });
+
     group('Long word breaking', () {
       test('breaks words longer than max width', () {
         final config = TextLayoutConfig(

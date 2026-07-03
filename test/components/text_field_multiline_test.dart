@@ -213,5 +213,63 @@ void main() {
         debugPrintAfterPump: true,
       );
     });
+
+    test('cursor paints where text inserts after a wrap-dropped space',
+        () async {
+      await testNocterm(
+        'cursor position after dropped wrap space',
+        (tester) async {
+          // Regression: when a word ends exactly at the wrap column and the
+          // next character is a space, the layout engine drops that space
+          // from the wrapped lines. The cursor paint path then mapped every
+          // offset after the wrap one column too far right — text appeared
+          // to insert one cell LEFT of the block cursor.
+          //
+          // Width 8 → layout maxWidth 7 (1 column reserved for the cursor).
+          // 'this is a test' lays out as ['this is', 'a test'] with the
+          // space at offset 7 dropped.
+          final controller = TextEditingController(text: 'this is a test');
+          // Offset 8 = the 'a' of 'a test': first char of visual line 1.
+          controller.selection = const TextSelection.collapsed(offset: 8);
+
+          await tester.pumpComponent(
+            Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 8,
+                height: 4,
+                child: TextField(
+                  controller: controller,
+                  maxLines: null,
+                  focused: true,
+                  showCursor: true,
+                  cursorBlinkRate: null,
+                  cursorColor: Colors.green,
+                ),
+              ),
+            ),
+          );
+
+          // The block cursor must sit ON the 'a' at row 1, column 0.
+          final cursorCell = tester.terminalState.getCellAt(0, 1);
+          expect(cursorCell?.char, 'a');
+          expect(cursorCell?.style.backgroundColor, Colors.green,
+              reason: 'block cursor should paint at row 1 col 0');
+          expect(
+            tester.terminalState.getCellAt(1, 1)?.style.backgroundColor,
+            isNot(Colors.green),
+            reason: 'cursor must not paint one cell right of the insert point',
+          );
+
+          // Typing inserts exactly under the painted cursor.
+          await tester.enterText('X');
+          expect(controller.text, 'this is Xa test');
+          final row1 = tester.terminalState
+              .getText(area: Rect.fromLTWH(0, 1, 8, 1))
+              .trimRight();
+          expect(row1, 'Xa test');
+        },
+      );
+    });
   });
 }

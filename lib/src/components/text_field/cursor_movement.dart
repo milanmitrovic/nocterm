@@ -21,62 +21,49 @@ class CursorMovement {
       );
     }
 
-    // Find which line the cursor is on
-    // We need to track both the position in the layout lines and original text
-    int textOffset = 0;
+    // The layout engine records where each layout line starts in the source
+    // text. These offsets are authoritative: they account for characters
+    // that exist in the text but in no layout line (newline separators and
+    // spaces dropped at a wrap boundary). Re-deriving offsets from line
+    // lengths here would drift by one for every dropped character.
+    final offsets = layoutResult.lineStartOffsets;
+    assert(offsets.length == layoutResult.lines.length,
+        'lineStartOffsets must parallel lines');
+
+    // The cursor's line is the last one starting at or before the offset.
+    // A cursor exactly on a dropped character (offset between line i's end
+    // and line i+1's start) clamps to the end of line i.
+    int lineIndex = 0;
+    for (int i = layoutResult.lines.length - 1; i >= 0; i--) {
+      if (offsets[i] <= cursorOffset) {
+        lineIndex = i;
+        break;
+      }
+    }
+
+    final line = layoutResult.lines[lineIndex];
+    final lineStartOffset = offsets[lineIndex];
+    final positionInLine =
+        math.min(math.max(0, cursorOffset - lineStartOffset), line.length);
+    final textBeforeCursor =
+        positionInLine > 0 ? line.substring(0, positionInLine) : '';
+    final visualColumn = UnicodeWidth.stringWidth(textBeforeCursor);
+
+    // Actual (hard) line index = newlines in the text before this line.
     int actualLineIndex = 0;
-
-    for (int i = 0; i < layoutResult.lines.length; i++) {
-      final line = layoutResult.lines[i];
-      final lineLength = line.length;
-
-      // Check if there's a newline after this line in the original text
-      bool hasNewline = false;
-      if (i < layoutResult.lines.length - 1 &&
-          textOffset + lineLength < text.length) {
-        // The layout engine splits on newlines, so there should be a newline if we're not at the end
-        if (text[textOffset + lineLength] == '\n') {
-          hasNewline = true;
-        }
-      }
-
-      final lineEndOffset = textOffset + lineLength;
-      final lineEndWithNewline = lineEndOffset + (hasNewline ? 1 : 0);
-
-      // Check if cursor is on this line
-      if (cursorOffset < lineEndWithNewline ||
-          i == layoutResult.lines.length - 1) {
-        // Cursor is on this line
-        final positionInLine =
-            math.min(math.max(0, cursorOffset - textOffset), lineLength);
-        final textBeforeCursor =
-            positionInLine > 0 ? line.substring(0, positionInLine) : '';
-        final visualColumn = UnicodeWidth.stringWidth(textBeforeCursor);
-
-        return CursorPosition(
-          line: i,
-          column: positionInLine,
-          visualColumn: visualColumn,
-          lineStartOffset: textOffset,
-          lineEndOffset: lineEndOffset,
-          actualLineIndex: actualLineIndex,
-        );
-      }
-
-      textOffset = lineEndWithNewline;
-      if (hasNewline) {
+    final scanLimit = math.min(lineStartOffset, text.length);
+    for (int k = 0; k < scanLimit; k++) {
+      if (text.codeUnitAt(k) == 0x0A) {
         actualLineIndex++;
       }
     }
 
-    // Cursor is at the very end
-    final lastLine = layoutResult.lines.last;
     return CursorPosition(
-      line: layoutResult.lines.length - 1,
-      column: lastLine.length,
-      visualColumn: UnicodeWidth.stringWidth(lastLine),
-      lineStartOffset: textOffset - lastLine.length,
-      lineEndOffset: textOffset,
+      line: lineIndex,
+      column: positionInLine,
+      visualColumn: visualColumn,
+      lineStartOffset: lineStartOffset,
+      lineEndOffset: lineStartOffset + line.length,
       actualLineIndex: actualLineIndex,
     );
   }
@@ -143,18 +130,9 @@ class CursorMovement {
     // Find the new cursor position on the target line
     final newLine = layoutResult.lines[targetLine];
 
-    // Calculate the line start offset
-    int newLineStartOffset = 0;
-    for (int i = 0; i < targetLine; i++) {
-      newLineStartOffset += layoutResult.lines[i].length;
-      // Add newline if it exists
-      if (i < layoutResult.lines.length - 1) {
-        final endOfLineOffset = newLineStartOffset;
-        if (endOfLineOffset < text.length && text[endOfLineOffset] == '\n') {
-          newLineStartOffset++;
-        }
-      }
-    }
+    // Line start offsets come from the layout engine — they account for
+    // newline separators and characters dropped at wrap boundaries.
+    final newLineStartOffset = layoutResult.lineStartOffsets[targetLine];
 
     // Find position in new line that matches target visual column
     int columnInNewLine = 0;

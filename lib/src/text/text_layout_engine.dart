@@ -48,6 +48,18 @@ class TextLayoutConfig {
 /// Result of text layout calculation
 class TextLayoutResult {
   final List<String> lines;
+
+  /// For each entry in [lines], the offset (in UTF-16 code units) of that
+  /// line's first character in the source text.
+  ///
+  /// This is the authoritative offset mapping: characters that exist in the
+  /// source but in no layout line — `\n` separators and spaces dropped at a
+  /// wrap boundary — are accounted for here. Consumers that map text offsets
+  /// to visual positions (cursor painting, mouse hit testing, selection)
+  /// must use these offsets instead of re-deriving them from line lengths,
+  /// which is ambiguous once characters can be dropped.
+  final List<int> lineStartOffsets;
+
   final int actualWidth;
   final int actualHeight;
   final bool didOverflowWidth;
@@ -55,11 +67,21 @@ class TextLayoutResult {
 
   const TextLayoutResult({
     required this.lines,
+    required this.lineStartOffsets,
     required this.actualWidth,
     required this.actualHeight,
     required this.didOverflowWidth,
     required this.didOverflowHeight,
   });
+}
+
+/// A wrapped line paired with the source offset of its first character
+/// within the paragraph it was wrapped from.
+class _WrappedLine {
+  final String text;
+  final int start;
+
+  const _WrappedLine(this.text, this.start);
 }
 
 /// Engine for laying out text with word wrapping and overflow handling
@@ -78,6 +100,12 @@ class TextLayoutEngine {
   /// Layout text without wrapping (only handle explicit newlines)
   static TextLayoutResult _layoutNoWrap(String text, TextLayoutConfig config) {
     final lines = text.split('\n');
+    final lineOffsets = <int>[];
+    int offset = 0;
+    for (final line in lines) {
+      lineOffsets.add(offset);
+      offset += line.length + 1; // +1 for the '\n' separator
+    }
     final maxLineWidth = lines.fold(0, (max, line) {
       final width = UnicodeWidth.stringWidth(line);
       return width > max ? width : max;
@@ -85,11 +113,13 @@ class TextLayoutEngine {
 
     // Apply maxLines constraint
     List<String> finalLines = lines;
+    List<int> finalOffsets = lineOffsets;
     bool didOverflowHeight = false;
 
     if (config.maxLines != null && lines.length > config.maxLines!) {
       didOverflowHeight = true;
       finalLines = lines.take(config.maxLines!).toList();
+      finalOffsets = lineOffsets.take(config.maxLines!).toList();
 
       if (config.overflow == TextOverflow.ellipsis && finalLines.isNotEmpty) {
         finalLines[finalLines.length - 1] =
@@ -99,6 +129,7 @@ class TextLayoutEngine {
 
     return TextLayoutResult(
       lines: finalLines,
+      lineStartOffsets: finalOffsets,
       actualWidth: maxLineWidth,
       actualHeight: finalLines.length,
       didOverflowWidth: maxLineWidth > config.maxWidth,
@@ -110,25 +141,32 @@ class TextLayoutEngine {
   static TextLayoutResult _layoutWithWrap(
       String text, TextLayoutConfig config) {
     final List<String> wrappedLines = [];
+    final List<int> lineOffsets = [];
     final paragraphs = text.split('\n');
 
+    int paragraphStart = 0;
     for (final paragraph in paragraphs) {
       if (paragraph.isEmpty) {
         wrappedLines.add('');
-        continue;
+        lineOffsets.add(paragraphStart);
+      } else {
+        for (final wrapped in _wrapParagraph(paragraph, config.maxWidth)) {
+          wrappedLines.add(wrapped.text);
+          lineOffsets.add(paragraphStart + wrapped.start);
+        }
       }
-
-      final lines = _wrapParagraph(paragraph, config.maxWidth);
-      wrappedLines.addAll(lines);
+      paragraphStart += paragraph.length + 1; // +1 for the '\n' separator
     }
 
     // Apply maxLines constraint
     List<String> finalLines = wrappedLines;
+    List<int> finalOffsets = lineOffsets;
     bool didOverflowHeight = false;
 
     if (config.maxLines != null && wrappedLines.length > config.maxLines!) {
       didOverflowHeight = true;
       finalLines = wrappedLines.take(config.maxLines!).toList();
+      finalOffsets = lineOffsets.take(config.maxLines!).toList();
 
       if (config.overflow == TextOverflow.ellipsis && finalLines.isNotEmpty) {
         finalLines[finalLines.length - 1] =
@@ -144,6 +182,7 @@ class TextLayoutEngine {
 
     return TextLayoutResult(
       lines: finalLines,
+      lineStartOffsets: finalOffsets,
       actualWidth: actualWidth,
       actualHeight: finalLines.length,
       didOverflowWidth: actualWidth > config.maxWidth,
@@ -151,13 +190,19 @@ class TextLayoutEngine {
     );
   }
 
-  /// Wrap a single paragraph into multiple lines
-  static List<String> _wrapParagraph(String paragraph, int maxWidth) {
-    final List<String> lines = [];
+  /// Wrap a single paragraph into multiple lines.
+  ///
+  /// Each returned line carries the offset of its first character within
+  /// [paragraph], so characters dropped at wrap boundaries (see the space
+  /// handling below) stay accounted for in the offset mapping.
+  static List<_WrappedLine> _wrapParagraph(String paragraph, int maxWidth) {
+    final List<_WrappedLine> lines = [];
     final words = _splitIntoWords(paragraph);
 
     String currentLine = '';
     int currentLineWidth = 0;
+    int currentLineStart = 0;
+    int tokenStart = 0;
 
     for (final word in words) {
       final wordWidth = UnicodeWidth.stringWidth(word);
@@ -167,13 +212,17 @@ class TextLayoutEngine {
         if (wordWidth > maxWidth) {
           // Word is too long - need to break it
           final brokenWords = _breakLongWord(word, maxWidth);
+          int partStart = tokenStart;
           for (int i = 0; i < brokenWords.length - 1; i++) {
-            lines.add(brokenWords[i]);
+            lines.add(_WrappedLine(brokenWords[i], partStart));
+            partStart += brokenWords[i].length;
           }
           currentLine = brokenWords.last;
+          currentLineStart = partStart;
           currentLineWidth = UnicodeWidth.stringWidth(brokenWords.last);
         } else {
           currentLine = word;
+          currentLineStart = tokenStart;
           currentLineWidth = wordWidth;
         }
       } else if (currentLineWidth + wordWidth <= maxWidth) {
@@ -182,31 +231,40 @@ class TextLayoutEngine {
         currentLineWidth += wordWidth;
       } else {
         // Word doesn't fit - start new line
-        lines.add(currentLine);
+        lines.add(_WrappedLine(currentLine, currentLineStart));
 
         if (word == ' ') {
           // A space token that straddles the wrap boundary would otherwise
           // seed the next line with a leading space, indenting it. Drop it.
+          // The dropped character still occupies a source offset — the next
+          // line starts after it.
           currentLine = '';
           currentLineWidth = 0;
+          currentLineStart = tokenStart + word.length;
         } else if (wordWidth > maxWidth) {
           // Word is too long for a line by itself
           final brokenWords = _breakLongWord(word, maxWidth);
+          int partStart = tokenStart;
           for (int i = 0; i < brokenWords.length - 1; i++) {
-            lines.add(brokenWords[i]);
+            lines.add(_WrappedLine(brokenWords[i], partStart));
+            partStart += brokenWords[i].length;
           }
           currentLine = brokenWords.last;
+          currentLineStart = partStart;
           currentLineWidth = UnicodeWidth.stringWidth(brokenWords.last);
         } else {
           currentLine = word;
+          currentLineStart = tokenStart;
           currentLineWidth = wordWidth;
         }
       }
+
+      tokenStart += word.length;
     }
 
     // Add remaining line
     if (currentLine.isNotEmpty) {
-      lines.add(currentLine);
+      lines.add(_WrappedLine(currentLine, currentLineStart));
     }
 
     return lines;
