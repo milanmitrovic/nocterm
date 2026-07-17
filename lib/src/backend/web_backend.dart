@@ -270,6 +270,9 @@ class WebBackend implements TerminalBackend {
   Stream<void>? get shutdownStream => _shutdownController.stream;
 
   @override
+  Stream<int>? get terminateStream => null; // No kill signals in a browser
+
+  @override
   void enableRawMode() {
     // No-op on web - browser handles input mode
   }

@@ -45,6 +45,10 @@ class StdioBackend implements TerminalBackend {
       'StdioBackend is only available on native platforms');
 
   @override
+  Stream<int>? get terminateStream => throw UnsupportedError(
+      'StdioBackend is only available on native platforms');
+
+  @override
   void enableRawMode() {
     throw UnsupportedError(
         'StdioBackend is only available on native platforms');

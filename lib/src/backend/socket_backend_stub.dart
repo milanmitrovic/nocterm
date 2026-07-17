@@ -50,6 +50,10 @@ class SocketBackend implements TerminalBackend {
       'SocketBackend is only available on native platforms');
 
   @override
+  Stream<int>? get terminateStream => throw UnsupportedError(
+      'SocketBackend is only available on native platforms');
+
+  @override
   void enableRawMode() {
     throw UnsupportedError(
         'SocketBackend is only available on native platforms');

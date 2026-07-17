@@ -49,6 +49,9 @@ class SocketBackend implements TerminalBackend {
       null; // Socket closure handled differently
 
   @override
+  Stream<int>? get terminateStream => null;
+
+  @override
   void enableRawMode() {
     // No-op: socket doesn't have raw mode
   }

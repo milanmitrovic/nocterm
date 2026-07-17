@@ -27,9 +27,23 @@ abstract class TerminalBackend {
   Stream<Size>? get resizeStream;
 
   /// Stream that emits when the app should shut down gracefully.
-  /// (e.g., SIGINT/SIGTERM on native, browser tab close on web)
+  /// (e.g., SIGINT on native, browser tab close on web)
+  /// Events on this stream may be routed through the component tree
+  /// (as a synthetic Ctrl+C), so an app can intercept them.
   /// Returns null if not supported.
   Stream<void>? get shutdownStream;
+
+  /// Stream that emits when the app must shut down immediately
+  /// (e.g., SIGTERM/SIGHUP on native). Events carry the suggested
+  /// process exit code (128 + signal number).
+  ///
+  /// Unlike [shutdownStream], these are NEVER routed through the
+  /// component tree — the binding restores the terminal state
+  /// (mouse tracking, alternate screen, cursor, raw mode) and exits
+  /// unconditionally, so a killed app can't leave the terminal
+  /// spewing mouse escape sequences into the shell.
+  /// Returns null if not supported.
+  Stream<int>? get terminateStream;
 
   /// Enable raw input mode (disable echo, line buffering).
   void enableRawMode();

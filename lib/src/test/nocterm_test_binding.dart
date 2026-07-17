@@ -316,6 +316,9 @@ class _MockBackend implements TerminalBackend {
   Stream<void>? get shutdownStream => null;
 
   @override
+  Stream<int>? get terminateStream => null;
+
+  @override
   void enableRawMode() {}
 
   @override

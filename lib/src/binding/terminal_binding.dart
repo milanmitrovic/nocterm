@@ -128,6 +128,7 @@ class TerminalBinding extends NoctermBinding
   StreamSubscription? _inputSubscription;
   StreamSubscription? _resizeSubscription;
   StreamSubscription? _shutdownSubscription;
+  StreamSubscription? _terminateSubscription;
   Size? _lastKnownSize;
 
   void _initializePipelineOwner() {
@@ -513,6 +514,18 @@ class TerminalBinding extends NoctermBinding
         }
       });
     }
+
+    // SIGTERM/SIGHUP: mandatory termination. Never routed through the
+    // component tree — an app intercepting Ctrl+C must not be able to
+    // swallow a kill and leave the terminal with mouse tracking / raw
+    // mode / the alternate screen still enabled.
+    final terminateStream = terminal.backend.terminateStream;
+    if (terminateStream != null) {
+      _terminateSubscription = terminateStream.listen((exitCode) {
+        _performImmediateShutdown();
+        terminal.backend.requestExit(exitCode);
+      });
+    }
   }
 
   /// Perform immediate synchronous shutdown for signal handlers
@@ -526,6 +539,7 @@ class TerminalBinding extends NoctermBinding
     _inputSubscription?.cancel();
     _resizeSubscription?.cancel();
     _shutdownSubscription?.cancel();
+    _terminateSubscription?.cancel();
 
     // Close all controllers
     try {

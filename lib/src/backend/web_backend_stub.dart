@@ -82,6 +82,10 @@ class WebBackend implements TerminalBackend {
       throw UnsupportedError('WebBackend is only available on web platforms');
 
   @override
+  Stream<int>? get terminateStream =>
+      throw UnsupportedError('WebBackend is only available on web platforms');
+
+  @override
   void enableRawMode() {
     throw UnsupportedError('WebBackend is only available on web platforms');
   }

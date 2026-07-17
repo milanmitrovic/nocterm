@@ -13,9 +13,11 @@ import 'win32_ansi_stdin.dart';
 class StdioBackend implements TerminalBackend {
   StreamController<Size>? _resizeController;
   StreamController<void>? _shutdownController;
+  StreamController<int>? _terminateController;
   StreamSubscription? _sigwinchSubscription;
   StreamSubscription? _sigintSubscription;
   StreamSubscription? _sigtermSubscription;
+  StreamSubscription? _sighupSubscription;
   Timer? _windowsResizeTimer;
   Size? _lastKnownSize;
   bool _disposed = false;
@@ -28,6 +30,7 @@ class StdioBackend implements TerminalBackend {
   void _initializeSignalHandling() {
     _resizeController = StreamController<Size>.broadcast();
     _shutdownController = StreamController<void>.broadcast();
+    _terminateController = StreamController<int>.broadcast();
 
     if (Platform.isWindows) {
       // Windows: Use Win32AnsiStdin for proper keyboard input
@@ -73,9 +76,17 @@ class StdioBackend implements TerminalBackend {
           _shutdownController?.add(null);
         }
       });
+      // SIGTERM/SIGHUP are mandatory-termination signals: they go on the
+      // terminate stream (never routed through the component tree) so the
+      // terminal is always restored before exit. Exit code = 128 + signal.
       _sigtermSubscription = ProcessSignal.sigterm.watch().listen((_) {
         if (!_disposed) {
-          _shutdownController?.add(null);
+          _terminateController?.add(143);
+        }
+      });
+      _sighupSubscription = ProcessSignal.sighup.watch().listen((_) {
+        if (!_disposed) {
+          _terminateController?.add(129);
         }
       });
     }
@@ -114,6 +125,9 @@ class StdioBackend implements TerminalBackend {
 
   @override
   Stream<void>? get shutdownStream => _shutdownController?.stream;
+
+  @override
+  Stream<int>? get terminateStream => _terminateController?.stream;
 
   @override
   void enableRawMode() {
@@ -167,8 +181,10 @@ class StdioBackend implements TerminalBackend {
     _sigwinchSubscription?.cancel();
     _sigintSubscription?.cancel();
     _sigtermSubscription?.cancel();
+    _sighupSubscription?.cancel();
     _resizeController?.close();
     _shutdownController?.close();
+    _terminateController?.close();
     _win32Stdin?.close();
   }
 }
