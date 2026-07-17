@@ -457,6 +457,14 @@ class TextStyle {
   /// This is a terminal-specific feature not present in Flutter's TextStyle.
   final bool reverse;
 
+  /// OSC 8 hyperlink target for this text.
+  ///
+  /// When non-null, the rendered cells are wrapped in OSC 8 escape
+  /// sequences so the terminal makes them clickable (usually Cmd/Ctrl+
+  /// click). This is a terminal-specific feature not present in Flutter's
+  /// TextStyle. Emission happens in the frame flush path, not in [toAnsi].
+  final String? hyperlink;
+
   /// Creates a text style.
   const TextStyle({
     this.color,
@@ -465,6 +473,7 @@ class TextStyle {
     this.fontStyle,
     this.decoration,
     this.reverse = false,
+    this.hyperlink,
   });
 
   /// Creates a copy of this text style but with the given fields replaced.
@@ -475,6 +484,7 @@ class TextStyle {
     FontStyle? fontStyle,
     TextDecoration? decoration,
     bool? reverse,
+    String? hyperlink,
   }) {
     return TextStyle(
       color: color ?? this.color,
@@ -483,6 +493,7 @@ class TextStyle {
       fontStyle: fontStyle ?? this.fontStyle,
       decoration: decoration ?? this.decoration,
       reverse: reverse ?? this.reverse,
+      hyperlink: hyperlink ?? this.hyperlink,
     );
   }
 
@@ -496,6 +507,7 @@ class TextStyle {
       fontStyle: other.fontStyle,
       decoration: other.decoration,
       reverse: other.reverse,
+      hyperlink: other.hyperlink,
     );
   }
 
@@ -552,7 +564,8 @@ class TextStyle {
         other.fontWeight == fontWeight &&
         other.fontStyle == fontStyle &&
         other.decoration == decoration &&
-        other.reverse == reverse;
+        other.reverse == reverse &&
+        other.hyperlink == hyperlink;
   }
 
   @override
@@ -563,6 +576,7 @@ class TextStyle {
         fontStyle,
         decoration,
         reverse,
+        hyperlink,
       );
 
   @override
@@ -572,7 +586,8 @@ class TextStyle {
       '${fontWeight != null ? 'fontWeight: $fontWeight, ' : ''}'
       '${fontStyle != null ? 'fontStyle: $fontStyle, ' : ''}'
       '${decoration != null ? 'decoration: $decoration, ' : ''}'
-      '${reverse ? 'reverse: true' : ''}'
+      '${reverse ? 'reverse: true, ' : ''}'
+      '${hyperlink != null ? 'hyperlink: $hyperlink' : ''}'
       ')';
 
   /// ANSI reset code to clear all formatting.

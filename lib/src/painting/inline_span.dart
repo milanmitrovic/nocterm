@@ -58,6 +58,7 @@ abstract class InlineSpan {
       fontStyle: child.fontStyle ?? parent.fontStyle,
       decoration: child.decoration ?? parent.decoration,
       reverse: child.reverse || parent.reverse,
+      hyperlink: child.hyperlink ?? parent.hyperlink,
     );
   }
 

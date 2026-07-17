@@ -203,6 +203,19 @@ class Terminal {
     write(sequence);
   }
 
+  /// Write an OSC 8 hyperlink boundary to the write buffer.
+  ///
+  /// A non-null [url] opens a hyperlink (subsequent text is clickable);
+  /// null closes the current one. Uses the ST terminator (`ESC \`) — the
+  /// canonical form in the OSC 8 spec, accepted by every terminal that
+  /// supports hyperlinks (BEL is the repo convention for other OSC codes,
+  /// but OSC 8 adoption followed the spec document).
+  void writeHyperlink(String? url) {
+    const osc = '\x1b]';
+    const st = '\x1b\\';
+    write('${osc}8;;${url ?? ''}$st');
+  }
+
   /// Set the terminal window title using OSC 2 sequence.
   /// Uses BEL terminator for maximum compatibility.
   ///

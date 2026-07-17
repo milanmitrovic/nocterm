@@ -57,6 +57,7 @@ class TerminalCanvas {
       fontStyle: style.fontStyle,
       decoration: style.decoration,
       reverse: style.reverse,
+      hyperlink: style.hyperlink,
     );
   }
 
@@ -222,6 +223,7 @@ class TerminalCanvas {
               fontStyle: existingCell.style.fontStyle,
               decoration: existingCell.style.decoration,
               reverse: existingCell.style.reverse,
+              hyperlink: existingCell.style.hyperlink,
             ),
           ),
         );

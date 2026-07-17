@@ -196,7 +196,8 @@ class TerminalState {
         a.fontWeight == b.fontWeight &&
         a.fontStyle == b.fontStyle &&
         a.decoration == b.decoration &&
-        a.reverse == b.reverse;
+        a.reverse == b.reverse &&
+        a.hyperlink == b.hyperlink;
   }
 
   bool _isDefaultStyle(TextStyle style) {

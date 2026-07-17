@@ -974,6 +974,7 @@ class TerminalBinding extends NoctermBinding
   /// Full buffer diff - compare every cell.
   void _renderFullDiff(buf.Buffer buffer, buf.Buffer previous) {
     TextStyle? currentStyle;
+    String? currentHyperlink;
 
     for (int y = 0; y < buffer.height; y++) {
       for (int x = 0; x < buffer.width; x++) {
@@ -997,6 +998,14 @@ class TerminalBinding extends NoctermBinding
 
         // Cell changed - move cursor and write
         terminal.moveCursor(x, y);
+
+        // OSC 8 hyperlink boundary. Tracked independently of the SGR run:
+        // links attach to cells at print time, and SGR reset does not
+        // close them. A new URL replaces the open link; null closes it.
+        if (cell.style.hyperlink != currentHyperlink) {
+          terminal.writeHyperlink(cell.style.hyperlink);
+          currentHyperlink = cell.style.hyperlink;
+        }
 
         // Handle style
         final hasStyle = cell.style.color != null ||
@@ -1030,6 +1039,10 @@ class TerminalBinding extends NoctermBinding
     if (currentStyle != null) {
       terminal.write(TextStyle.reset);
     }
+    // Close any dangling hyperlink \u2014 SGR reset does not clear OSC 8.
+    if (currentHyperlink != null) {
+      terminal.writeHyperlink(null);
+    }
 
     // Render pending sixel images
     _renderPendingImages(buffer);
@@ -1044,6 +1057,7 @@ class TerminalBinding extends NoctermBinding
     terminal.write(EscapeCodes.clearScreen);
     terminal.moveTo(0, 0);
     TextStyle? currentStyle;
+    String? currentHyperlink;
 
     for (int y = 0; y < buffer.height; y++) {
       for (int x = 0; x < buffer.width; x++) {
@@ -1062,6 +1076,12 @@ class TerminalBinding extends NoctermBinding
           }
           terminal.write(' ');
           continue;
+        }
+
+        // OSC 8 hyperlink boundary (see _renderFullDiff).
+        if (cell.style.hyperlink != currentHyperlink) {
+          terminal.writeHyperlink(cell.style.hyperlink);
+          currentHyperlink = cell.style.hyperlink;
         }
 
         // Handle style
@@ -1098,6 +1118,10 @@ class TerminalBinding extends NoctermBinding
     // Reset style at end
     if (currentStyle != null) {
       terminal.write(TextStyle.reset);
+    }
+    // Close any dangling hyperlink \u2014 SGR reset does not clear OSC 8.
+    if (currentHyperlink != null) {
+      terminal.writeHyperlink(null);
     }
 
     // Render pending sixel images
