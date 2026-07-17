@@ -712,9 +712,6 @@ class InputParser {
 
   /// Parse bracketed paste content (ESC[200~ ... ESC[201~)
   (InputEvent, int)? _parseBracketedPaste() {
-    print(
-        '[DEBUG] InputParser: Detected bracketed paste START marker (ESC[200~)');
-
     // We know buffer starts with ESC[200~ (6 bytes)
     // Look for the end marker ESC[201~
     int endMarkerStart = -1;
@@ -732,19 +729,12 @@ class InputParser {
 
     if (endMarkerStart == -1) {
       // Haven't received the end marker yet, wait for more data
-      print(
-          '[DEBUG] InputParser: Waiting for paste END marker (ESC[201~), buffer.length=${_buffer.length}');
       return null;
     }
 
     // Extract the pasted text (between start and end markers)
     final pasteBytes = _buffer.sublist(6, endMarkerStart);
     final pasteText = utf8.decode(pasteBytes, allowMalformed: true);
-
-    print(
-        '[DEBUG] InputParser: Found paste END marker, extracted ${pasteText.length} chars');
-    print(
-        '[DEBUG] InputParser: Pasted text: "${pasteText.substring(0, pasteText.length > 100 ? 100 : pasteText.length)}${pasteText.length > 100 ? '...' : ''}"');
 
     // Total bytes consumed: start marker (6) + paste content + end marker (6)
     final totalBytes = endMarkerStart + 6;
