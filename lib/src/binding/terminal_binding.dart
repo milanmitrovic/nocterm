@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:nocterm/nocterm.dart';
 import 'package:nocterm/src/framework/terminal_canvas.dart';
 import 'package:nocterm/src/navigation/render_theater.dart';
-import 'package:nocterm/src/rendering/scrollable_render_object.dart';
 import 'package:nocterm/src/image/image_cleanup.dart';
 
 import '../backend/terminal.dart' as term;
@@ -13,6 +12,7 @@ import '../keyboard/input_event.dart';
 import '../keyboard/input_parser.dart';
 import '../rendering/mouse_hit_test.dart';
 import '../rendering/mouse_tracker.dart';
+import '../rendering/mouse_wheel_dispatch.dart';
 import 'hot_reload_mixin.dart';
 
 /// Terminal UI binding that handles terminal input/output and event loop
@@ -638,7 +638,7 @@ class TerminalBinding extends NoctermBinding
       // Find the render object at the mouse position
       final renderObject = _findRenderObjectInTree(rootElement!);
       if (renderObject != null) {
-        _dispatchMouseWheelAtPosition(rootElement!, event,
+        dispatchMouseWheelAtPosition(rootElement!, event,
             Offset(event.x.toDouble(), event.y.toDouble()), Offset.zero);
       }
     }
@@ -705,86 +705,8 @@ class TerminalBinding extends NoctermBinding
   }
 
   /// Dispatch a mouse wheel event to scrollable RenderObjects at a specific position
-  bool _dispatchMouseWheelAtPosition(Element element, MouseEvent event,
-      Offset mousePos, Offset currentOffset) {
-    // TODO: This is a hack to handle RenderTheater specially for Navigator
-    // Should be properly integrated into the render object hierarchy
-    if (element.renderObject is RenderTheater) {
-      final multiChildRenderObject = element as MultiChildRenderObjectElement;
-      if (multiChildRenderObject.children.isNotEmpty) {
-        final child = multiChildRenderObject.children.last;
-        return _dispatchMouseWheelAtPosition(
-            child, event, mousePos, currentOffset);
-      }
-    }
-
-    // Calculate this element's bounds if it has a render object
-    Rect? elementBounds;
-    RenderObject? renderObject;
-
-    if (element is RenderObjectElement) {
-      renderObject = element.renderObject;
-      final size = renderObject.size;
-
-      // Get the offset from parent data if available
-      Offset localOffset = currentOffset;
-      if (renderObject.parentData is BoxParentData) {
-        final boxParentData = renderObject.parentData as BoxParentData;
-        localOffset = currentOffset + boxParentData.offset;
-      }
-
-      elementBounds = Rect.fromLTWH(
-        localOffset.dx,
-        localOffset.dy,
-        size.width,
-        size.height,
-      );
-    }
-
-    // Check if mouse is within this element's bounds
-    bool isWithinBounds = elementBounds?.contains(mousePos) ?? true;
-
-    if (!isWithinBounds) {
-      return false; // Mouse is outside this element
-    }
-
-    // Try to dispatch to children first (depth-first, but only if within their bounds)
-    bool handled = false;
-
-    // Calculate offset for children
-    Offset childrenOffset = currentOffset;
-    if (element is RenderObjectElement && elementBounds != null) {
-      // Use the element's actual position for its children
-      childrenOffset = Offset(elementBounds.left, elementBounds.top);
-    }
-
-    // Visit children in reverse order to respect visual stacking
-    // (last child is visually on top in Stack-like containers)
-    final children = <Element>[];
-    element.visitChildren((child) {
-      children.add(child);
-    });
-
-    for (final child in children.reversed) {
-      if (!handled) {
-        handled = _dispatchMouseWheelAtPosition(
-            child, event, mousePos, childrenOffset);
-      }
-    }
-
-    // If no child handled it and this element's render object is scrollable, handle it here
-    if (!handled &&
-        renderObject != null &&
-        renderObject is ScrollableRenderObjectMixin) {
-      final scrollableRenderObject =
-          renderObject as ScrollableRenderObjectMixin;
-      // Check if the render object implements scrolling through duck typing
-      // This allows the RenderObject to handle scrolling without importing the mixin
-      handled = scrollableRenderObject.handleMouseWheel(event);
-    }
-
-    return handled;
-  }
+  // Wheel dispatch lives in rendering/mouse_wheel_dispatch.dart — shared
+  // with NoctermTestBinding so tests exercise the same scroll behavior.
 
   /// Run the main event loop
   Future<void> runEventLoop() async {

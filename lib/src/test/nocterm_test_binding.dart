@@ -4,6 +4,7 @@ import 'package:nocterm/nocterm.dart';
 import 'package:nocterm/src/framework/terminal_canvas.dart';
 import 'package:nocterm/src/rendering/mouse_hit_test.dart';
 import 'package:nocterm/src/rendering/mouse_tracker.dart';
+import 'package:nocterm/src/rendering/mouse_wheel_dispatch.dart';
 
 import '../backend/terminal.dart' as term;
 import '../buffer.dart' as buf;
@@ -229,6 +230,15 @@ class NoctermTestBinding extends NoctermBinding with SchedulerBinding {
   /// Route a mouse event through the component tree
   void _routeMouseEvent(MouseEvent event) {
     if (rootElement == null) return;
+
+    // Wheel events scroll the scrollable under the pointer — same
+    // dispatch as the real TerminalBinding, so tests exercise identical
+    // scroll behavior.
+    if (event.button == MouseButton.wheelUp ||
+        event.button == MouseButton.wheelDown) {
+      dispatchMouseWheelAtPosition(rootElement!, event,
+          Offset(event.x.toDouble(), event.y.toDouble()), Offset.zero);
+    }
 
     // Find the render object in the tree
     final renderObject = _findRenderObjectInTree(rootElement!);
