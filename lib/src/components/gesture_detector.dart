@@ -5,6 +5,7 @@ import '../gestures/hit_test.dart';
 import '../gestures/tap.dart';
 import '../gestures/long_press.dart';
 import '../rendering/mouse_tracker.dart';
+import '../rendering/scrollable_render_object.dart';
 import 'package:nocterm/src/rendering/mouse_region.dart';
 
 /// A widget that detects gestures.
@@ -41,6 +42,7 @@ class GestureDetector extends StatefulComponent {
     this.onLongPress,
     this.onLongPressStart,
     this.onLongPressEnd,
+    this.onWheel,
     this.behavior = HitTestBehavior.deferToChild,
     this.child,
   });
@@ -68,6 +70,22 @@ class GestureDetector extends StatefulComponent {
 
   /// Called when a long press ends.
   final GestureLongPressEndCallback? onLongPressEnd;
+
+  /// Called when the mouse wheel turns over this detector.
+  ///
+  /// Wheel events do NOT travel with the other pointer events — the mouse
+  /// tracker drops them, and `dispatchMouseWheelAtPosition` walks the tree
+  /// depth-first offering each event to the innermost render object that
+  /// can scroll. So without this hook the only thing that can ever see a
+  /// wheel turn is a scrollable, and a surface that manages its own
+  /// viewport (one that windows its content and draws exactly the rows
+  /// that fit) has no scrollable to put the event in.
+  ///
+  /// Setting it makes this detector one of those innermost handlers, so it
+  /// takes the wheel BEFORE the enclosing ListView — which is the point:
+  /// such a surface needs the event instead of the list, not after it.
+  /// Left null, nothing changes and the list scrolls as it always did.
+  final GestureWheelCallback? onWheel;
 
   /// How to behave during hit testing.
   final HitTestBehavior behavior;
@@ -180,6 +198,7 @@ class _GestureDetectorState extends State<GestureDetector> {
       onPointerDown: _handlePointerDown,
       onPointerUp: _handlePointerUp,
       onPointerMove: _handlePointerMove,
+      onWheel: component.onWheel,
       behavior: component.behavior,
       child: component.child,
     );
@@ -192,6 +211,7 @@ class _GestureDetectorMouseRegion extends SingleChildRenderObjectComponent {
     required this.onPointerDown,
     required this.onPointerUp,
     required this.onPointerMove,
+    required this.onWheel,
     required this.behavior,
     super.child,
   });
@@ -199,6 +219,7 @@ class _GestureDetectorMouseRegion extends SingleChildRenderObjectComponent {
   final void Function(MouseEvent) onPointerDown;
   final void Function(MouseEvent) onPointerUp;
   final void Function(MouseEvent) onPointerMove;
+  final GestureWheelCallback? onWheel;
   final HitTestBehavior behavior;
 
   @override
@@ -207,6 +228,7 @@ class _GestureDetectorMouseRegion extends SingleChildRenderObjectComponent {
       onPointerDown: onPointerDown,
       onPointerUp: onPointerUp,
       onPointerMove: onPointerMove,
+      onWheel: onWheel,
       behavior: behavior,
     );
   }
@@ -218,16 +240,19 @@ class _GestureDetectorMouseRegion extends SingleChildRenderObjectComponent {
       ..onPointerDown = onPointerDown
       ..onPointerUp = onPointerUp
       ..onPointerMove = onPointerMove
+      ..onWheel = onWheel
       ..behavior = behavior;
   }
 }
 
 /// Render object for GestureDetector that tracks mouse events.
-class _RenderGestureDetector extends RenderMouseRegion {
+class _RenderGestureDetector extends RenderMouseRegion
+    with ScrollableRenderObjectMixin {
   _RenderGestureDetector({
     required void Function(MouseEvent) onPointerDown,
     required void Function(MouseEvent) onPointerUp,
     required void Function(MouseEvent) onPointerMove,
+    required this.onWheel,
     required HitTestBehavior behavior,
   })  : _onPointerDown = onPointerDown,
         _onPointerUp = onPointerUp,
@@ -262,6 +287,26 @@ class _RenderGestureDetector extends RenderMouseRegion {
     if (_onPointerMove == value) return;
     _onPointerMove = value;
     _updateGestureAnnotation();
+  }
+
+  /// The wheel hook. A plain field: nothing about it affects layout or the
+  /// mouse-tracker annotation, so it needs none of the invalidation the
+  /// pointer setters above do.
+  GestureWheelCallback? onWheel;
+
+  /// Wheel turns are offered innermost-first by
+  /// `dispatchMouseWheelAtPosition`, which stops at the first handler that
+  /// returns true. So a detector with no [onWheel] must decline — otherwise
+  /// every GestureDetector in the tree would swallow the wheel and no list
+  /// could ever scroll again.
+  @override
+  bool handleMouseWheel(MouseEvent event) {
+    final callback = onWheel;
+    if (callback == null) return false;
+    final up = event.button == MouseButton.wheelUp;
+    if (!up && event.button != MouseButton.wheelDown) return false;
+    callback(up: up, lines: 3.0);
+    return true;
   }
 
   HitTestBehavior _behavior;

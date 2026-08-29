@@ -66,3 +66,7 @@ typedef GestureLongPressStartCallback = void Function(
     LongPressStartDetails details);
 typedef GestureLongPressEndCallback = void Function(
     LongPressEndDetails details);
+
+/// A mouse wheel turn. [up] is the direction; [lines] is how far, in
+/// terminal rows, matching what a scrollable would have moved.
+typedef GestureWheelCallback = void Function({required bool up, required double lines});
