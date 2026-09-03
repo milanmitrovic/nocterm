@@ -452,11 +452,23 @@ class _TextFieldState extends State<TextField> {
     } else if (key == LogicalKey.arrowDown && component.maxLines != 1) {
       _moveCursorVertically(1, false);
       return true;
-    } else if (key == LogicalKey.home) {
+    } else if (key == LogicalKey.home && event.isControlPressed) {
+      // Ctrl+Home → start of the whole buffer.
       _moveCursorToStart();
       return true;
-    } else if (key == LogicalKey.end) {
+    } else if (key == LogicalKey.end && event.isControlPressed) {
+      // Ctrl+End → end of the whole buffer.
       _moveCursorToEnd();
+      return true;
+    } else if (key == LogicalKey.home) {
+      // Home → beginning of the current line, same as Ctrl+A.
+      // Shift+Home extends the selection to the line start.
+      _renderTextField?.moveCursorToLineStart(event.isShiftPressed);
+      return true;
+    } else if (key == LogicalKey.end) {
+      // End → end of the current line, same as Ctrl+E.
+      // Shift+End extends the selection to the line end.
+      _renderTextField?.moveCursorToLineEnd(event.isShiftPressed);
       return true;
     } else if (event.matches(LogicalKey.keyA, ctrl: true)) {
       // Emacs convention: Ctrl+A → beginning of current line.

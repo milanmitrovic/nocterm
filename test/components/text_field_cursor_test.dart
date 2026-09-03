@@ -128,6 +128,175 @@ void main() {
       );
     });
 
+    test('Home moves cursor to start of current line', () async {
+      // Regression: Home used to jump to the start of the whole buffer.
+      // It is now bound to the same line-start motion as Ctrl+A.
+      await testNocterm(
+        'home line start',
+        (tester) async {
+          final controller = TextEditingController(text: 'hello\nworld');
+          // Cursor placed in the middle of the second line ('world').
+          controller.selection = const TextSelection.collapsed(offset: 8);
+
+          await tester.pumpComponent(
+            Container(
+              width: 30,
+              height: 4,
+              decoration: BoxDecoration(border: BoxBorder.all()),
+              child: TextField(
+                controller: controller,
+                focused: true,
+                maxLines: 3,
+              ),
+            ),
+          );
+
+          await tester.sendKey(LogicalKey.home);
+
+          // Offset 6 = first character of 'world' (after 'hello\n'),
+          // NOT offset 0.
+          expect(controller.selection.isCollapsed, isTrue);
+          expect(controller.selection.extentOffset, 6);
+        },
+      );
+    });
+
+    test('End moves cursor to end of current line', () async {
+      // Regression: End used to jump to the end of the whole buffer.
+      await testNocterm(
+        'end line end',
+        (tester) async {
+          final controller = TextEditingController(text: 'hello\nworld');
+          // Cursor placed in the middle of the first line ('hello').
+          controller.selection = const TextSelection.collapsed(offset: 2);
+
+          await tester.pumpComponent(
+            Container(
+              width: 30,
+              height: 4,
+              decoration: BoxDecoration(border: BoxBorder.all()),
+              child: TextField(
+                controller: controller,
+                focused: true,
+                maxLines: 3,
+              ),
+            ),
+          );
+
+          await tester.sendKey(LogicalKey.end);
+
+          // Offset 5 = end of 'hello', just before the '\n' — NOT 11.
+          expect(controller.selection.isCollapsed, isTrue);
+          expect(controller.selection.extentOffset, 5);
+        },
+      );
+    });
+
+    test('Ctrl+Home and Ctrl+End move to the buffer ends', () async {
+      await testNocterm(
+        'ctrl home/end buffer ends',
+        (tester) async {
+          final controller = TextEditingController(text: 'hello\nworld');
+          // Cursor placed in the middle of the second line ('world').
+          controller.selection = const TextSelection.collapsed(offset: 8);
+
+          await tester.pumpComponent(
+            Container(
+              width: 30,
+              height: 4,
+              decoration: BoxDecoration(border: BoxBorder.all()),
+              child: TextField(
+                controller: controller,
+                focused: true,
+                maxLines: 3,
+              ),
+            ),
+          );
+
+          await tester.sendKeyEvent(const KeyboardEvent(
+            logicalKey: LogicalKey.home,
+            modifiers: ModifierKeys(ctrl: true),
+          ));
+          expect(controller.selection.isCollapsed, isTrue);
+          expect(controller.selection.extentOffset, 0);
+
+          await tester.sendKeyEvent(const KeyboardEvent(
+            logicalKey: LogicalKey.end,
+            modifiers: ModifierKeys(ctrl: true),
+          ));
+          expect(controller.selection.isCollapsed, isTrue);
+          expect(controller.selection.extentOffset, controller.text.length);
+        },
+      );
+    });
+
+    test('Shift+End extends the selection to the end of the line', () async {
+      await testNocterm(
+        'shift+end extends selection',
+        (tester) async {
+          final controller = TextEditingController(text: 'hello\nworld');
+          // Cursor placed in the middle of the first line ('hello').
+          controller.selection = const TextSelection.collapsed(offset: 2);
+
+          await tester.pumpComponent(
+            Container(
+              width: 30,
+              height: 4,
+              decoration: BoxDecoration(border: BoxBorder.all()),
+              child: TextField(
+                controller: controller,
+                focused: true,
+                maxLines: 3,
+              ),
+            ),
+          );
+
+          await tester.sendKeyEvent(const KeyboardEvent(
+            logicalKey: LogicalKey.end,
+            modifiers: ModifierKeys(shift: true),
+          ));
+
+          expect(controller.selection.isCollapsed, isFalse);
+          expect(controller.selection.baseOffset, 2);
+          expect(controller.selection.extentOffset, 5);
+        },
+      );
+    });
+
+    test('Shift+Home extends the selection to the start of the line',
+        () async {
+      await testNocterm(
+        'shift+home extends selection',
+        (tester) async {
+          final controller = TextEditingController(text: 'hello\nworld');
+          // Cursor placed in the middle of the second line ('world').
+          controller.selection = const TextSelection.collapsed(offset: 8);
+
+          await tester.pumpComponent(
+            Container(
+              width: 30,
+              height: 4,
+              decoration: BoxDecoration(border: BoxBorder.all()),
+              child: TextField(
+                controller: controller,
+                focused: true,
+                maxLines: 3,
+              ),
+            ),
+          );
+
+          await tester.sendKeyEvent(const KeyboardEvent(
+            logicalKey: LogicalKey.home,
+            modifiers: ModifierKeys(shift: true),
+          ));
+
+          expect(controller.selection.isCollapsed, isFalse);
+          expect(controller.selection.baseOffset, 8);
+          expect(controller.selection.extentOffset, 6);
+        },
+      );
+    });
+
     test('typing should replace selected text', () async {
       await testNocterm(
         'replace selection with typed text',
