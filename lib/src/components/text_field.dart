@@ -403,6 +403,15 @@ class _TextFieldState extends State<TextField> {
       component.onEditingComplete?.call();
       component.onSubmitted?.call(_controller.text);
       return true;
+    } else if (key == LogicalKey.backspace && event.isControlPressed) {
+      // Must precede the plain backspace branch — otherwise Ctrl+Backspace
+      // is swallowed by it and the word-delete branch is unreachable.
+      _deleteWordBackward();
+      return true;
+    } else if (key == LogicalKey.delete && event.isControlPressed) {
+      // Must precede the plain delete branch, for the same reason.
+      _deleteWordForward();
+      return true;
     } else if (key == LogicalKey.backspace) {
       _handleBackspace();
       return true;
@@ -465,12 +474,6 @@ class _TextFieldState extends State<TextField> {
       return true;
     } else if (event.matches(LogicalKey.keyV, ctrl: true)) {
       _paste();
-      return true;
-    } else if (key == LogicalKey.backspace && event.isControlPressed) {
-      _deleteWordBackward();
-      return true;
-    } else if (key == LogicalKey.delete && event.isControlPressed) {
-      _deleteWordForward();
       return true;
     } else if (event.matches(LogicalKey.keyT, ctrl: true)) {
       _transposeCharacters();
@@ -655,7 +658,10 @@ class _TextFieldState extends State<TextField> {
       if (graphemesAfter.isNotEmpty) {
         final newTextAfter = graphemesAfter.skip(1).toString();
         _controller.text = textBefore + newTextAfter;
-        // Cursor position stays the same
+        // The `text` setter collapses the selection to the end of the new
+        // text, so the pre-delete offset has to be restored explicitly.
+        _controller.selection =
+            TextSelection.collapsed(offset: textBefore.length);
       }
     }
   }
@@ -745,7 +751,10 @@ class _TextFieldState extends State<TextField> {
 
     _controller.text =
         text.substring(0, clampedExtentOffset) + text.substring(end);
-    // Cursor position stays the same
+    // The `text` setter collapses the selection to the end of the new text,
+    // so the pre-delete offset has to be restored explicitly.
+    _controller.selection =
+        TextSelection.collapsed(offset: clampedExtentOffset);
   }
 
   void _transposeCharacters() {
@@ -780,6 +789,9 @@ class _TextFieldState extends State<TextField> {
       chars[charIndex == chars.length ? charIndex - 1 : charIndex] = temp;
 
       _controller.text = chars.join();
+      // The `text` setter collapses the selection to the end of the new
+      // text; restore the pre-transpose offset before moving on from it.
+      _controller.selection = TextSelection.collapsed(offset: pos);
 
       // Move cursor forward if not at end
       if (pos < text.length) {
