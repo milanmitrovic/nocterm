@@ -5,6 +5,7 @@ Future<void> runAppImpl(
   Component app, {
   bool enableHotReload = true,
   TerminalBackend? backend,
+  bool enableColorSchemeUpdates = false,
 }) {
   throw UnsupportedError('Platform not supported');
 }

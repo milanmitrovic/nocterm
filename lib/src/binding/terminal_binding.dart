@@ -47,6 +47,11 @@ class TerminalBinding extends NoctermBinding
   static const _bufferStaleTimeout = Duration(milliseconds: 100);
   final _mouseTracker = MouseTracker();
   final _oscEventsController = StreamController<String>.broadcast();
+  final _colorSchemeController =
+      StreamController<ColorSchemeNotice>.broadcast();
+
+  /// Whether DEC private mode 2031 was enabled by [initialize].
+  bool _colorSchemeUpdatesEnabled = false;
 
   /// Previous frame's buffer for differential rendering.
   buf.Buffer? _previousBuffer;
@@ -148,8 +153,37 @@ class TerminalBinding extends NoctermBinding
   /// Stream of OSC responses captured from the terminal
   Stream<String> get oscEvents => _oscEventsController.stream;
 
+  /// Stream of terminal colour-scheme change notifications.
+  ///
+  /// Only ever emits when [initialize] was called with
+  /// `enableColorSchemeUpdates: true` AND the terminal implements DEC
+  /// private mode 2031; the first event is usually the reply to the
+  /// `CSI ? 996 n` query [initialize] sends.
+  ///
+  /// **Treat an event as "the colours changed, re-read them", not as an
+  /// authoritative reading.** [ColorSchemeNotice.brightness] is a hint —
+  /// terminals disagree about the payload, and some send a notice whose
+  /// value lags the palette they already repainted with. The reliable read
+  /// is still an OSC 11 query (`Terminal.getBackgroundColor` /
+  /// `detectTerminalBrightness`), which this stream tells you when to run.
+  Stream<ColorSchemeNotice> get colorSchemeNotices =>
+      _colorSchemeController.stream;
+
+  /// Whether colour-scheme change notifications were requested and the
+  /// enabling escape sequence written.
+  ///
+  /// True does not mean the terminal supports mode 2031 — an unsupported
+  /// mode is silently ignored, and the only evidence either way is whether
+  /// [colorSchemeNotices] ever emits.
+  bool get colorSchemeUpdatesEnabled => _colorSchemeUpdatesEnabled;
+
   /// Initialize the terminal and start the event loop
-  void initialize() {
+  ///
+  /// [enableColorSchemeUpdates] opts into DEC private mode 2031 (see
+  /// [colorSchemeNotices]). It is off by default: enabling it makes the
+  /// terminal push reports onto the input stream, which is a behaviour
+  /// change an app should ask for rather than inherit.
+  void initialize({bool enableColorSchemeUpdates = false}) {
     // Setup terminal
     terminal.enterAlternateScreen();
     terminal.hideCursor();
@@ -184,6 +218,16 @@ class TerminalBinding extends NoctermBinding
     // We also enable modifyOtherKeys as a fallback for terminals like xterm.
     terminal.write(EscapeCodes.enable.kittyKeyboard);
     terminal.write(EscapeCodes.enable.modifyOtherKeys);
+
+    // Opt-in: ask the terminal to report colour-scheme changes, then ask it
+    // once for the current scheme so the app has an answer without waiting
+    // for the user to switch themes.
+    if (enableColorSchemeUpdates) {
+      _colorSchemeUpdatesEnabled = true;
+      terminal.enableColorSchemeUpdates();
+      terminal.queryColorScheme();
+    }
+
     terminal.flush();
 
     // Store initial size
@@ -282,6 +326,13 @@ class TerminalBinding extends NoctermBinding
           );
           _keyboardEventController.add(pasteEvent);
           _routeKeyboardEvent(pasteEvent);
+        } else if (event is ColorSchemeInputEvent) {
+          // Terminal colour-scheme change (DEC mode 2031). Surfaced on its
+          // own stream, like resize — never routed through the component
+          // tree as a key.
+          if (!_colorSchemeController.isClosed) {
+            _colorSchemeController.add(event.notice);
+          }
         }
       }
 
@@ -557,6 +608,9 @@ class TerminalBinding extends NoctermBinding
     try {
       _oscEventsController.close();
     } catch (_) {}
+    try {
+      _colorSchemeController.close();
+    } catch (_) {}
 
     // Stop hot reload if it was initialized
     try {
@@ -578,6 +632,9 @@ class TerminalBinding extends NoctermBinding
       // Pop kitty keyboard mode and reset modifyOtherKeys
       terminal.backend.writeRaw(EscapeCodes.disable.kittyKeyboard);
       terminal.backend.writeRaw(EscapeCodes.disable.modifyOtherKeys);
+      if (_colorSchemeUpdatesEnabled) {
+        terminal.backend.writeRaw(EscapeCodes.disable.colorSchemeUpdates);
+      }
       terminal.restoreColors(); // Restore terminal colors
       terminal.flush();
 
@@ -761,6 +818,9 @@ class TerminalBinding extends NoctermBinding
     try {
       _mouseEventController.close();
     } catch (_) {}
+    try {
+      _colorSchemeController.close();
+    } catch (_) {}
 
     // Wake up event loop one last time before closing
     if (!_eventLoopController.isClosed) {
@@ -783,6 +843,9 @@ class TerminalBinding extends NoctermBinding
       // Pop kitty keyboard mode and reset modifyOtherKeys
       terminal.backend.writeRaw(EscapeCodes.disable.kittyKeyboard);
       terminal.backend.writeRaw(EscapeCodes.disable.modifyOtherKeys);
+      if (_colorSchemeUpdatesEnabled) {
+        terminal.backend.writeRaw(EscapeCodes.disable.colorSchemeUpdates);
+      }
 
       // Restore terminal (this includes leaving alternate screen)
       terminal.showCursor();

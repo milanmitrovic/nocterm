@@ -31,6 +31,7 @@ Future<void> runAppImpl(
   Component app, {
   bool enableHotReload = true,
   TerminalBackend? backend,
+  bool enableColorSchemeUpdates = false,
 }) async {
   // Wrap the user's app with DebugOverlay so Ctrl+G toggle works out of the box
   final wrappedApp = DebugOverlay(child: app);
@@ -55,7 +56,13 @@ Future<void> runAppImpl(
     isShellMode = false;
   }
 
-  await _runApp(wrappedApp, effectiveBackend, enableHotReload, isShellMode);
+  await _runApp(
+    wrappedApp,
+    effectiveBackend,
+    enableHotReload,
+    isShellMode,
+    enableColorSchemeUpdates,
+  );
 }
 
 Future<void> _runApp(
@@ -63,6 +70,7 @@ Future<void> _runApp(
   TerminalBackend backend,
   bool enableHotReload,
   bool isShellMode,
+  bool enableColorSchemeUpdates,
 ) async {
   TerminalBinding? binding;
   LogServer? logServer;
@@ -81,7 +89,9 @@ Future<void> _runApp(
       final terminal = term.Terminal(backend);
       binding = TerminalBinding(terminal);
 
-      binding!.initialize();
+      binding!.initialize(
+        enableColorSchemeUpdates: enableColorSchemeUpdates,
+      );
       binding!.attachRootComponent(app);
 
       if (enableHotReload && !bool.fromEnvironment('dart.vm.product')) {

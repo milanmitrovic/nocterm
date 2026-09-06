@@ -173,6 +173,41 @@ class Terminal {
     }).catchError((_) => null);
   }
 
+  /// Enable colour-scheme change notifications (DEC private mode 2031).
+  ///
+  /// While enabled, the terminal sends `CSI ? 997 ; <n> n` whenever its
+  /// palette flips between dark and light. The report is decoded by
+  /// `InputParser` into a `ColorSchemeNotice`, so it never reaches the app
+  /// as keystrokes. Terminals without support ignore the sequence and
+  /// simply never report.
+  ///
+  /// Buffered — flushed with the next frame.
+  void enableColorSchemeUpdates() {
+    write(EscapeCodes.enable.colorSchemeUpdates);
+  }
+
+  /// Stop colour-scheme change notifications (DEC private mode 2031).
+  ///
+  /// Written immediately (after flushing pending output) because this is a
+  /// teardown step: the mode must be off before the process leaves the
+  /// alternate screen.
+  void disableColorSchemeUpdates() {
+    flush();
+    backend.writeRaw(EscapeCodes.disable.colorSchemeUpdates);
+  }
+
+  /// Ask the terminal which colour scheme it is using right now.
+  ///
+  /// The answer arrives on the input stream in exactly the same shape as an
+  /// unsolicited mode-2031 notification, so callers need no separate path
+  /// for it. Send it once after [enableColorSchemeUpdates] rather than
+  /// waiting for the user to change themes.
+  ///
+  /// Buffered — flushed with the next frame.
+  void queryColorScheme() {
+    write(EscapeCodes.queryColorScheme);
+  }
+
   /// Restore terminal colors to defaults
   void restoreColors() {
     backend.writeRaw('\x1b]110'); // foreground

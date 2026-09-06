@@ -55,6 +55,7 @@ library;
 
 export 'brightness.dart';
 export 'adaptive_color.dart';
+export 'color_scheme_notice.dart';
 export 'terminal_brightness_detection.dart';
 export 'tui_colors.dart';
 export 'tui_theme_data.dart';

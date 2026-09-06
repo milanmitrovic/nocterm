@@ -1,3 +1,4 @@
+import '../theme/color_scheme_notice.dart';
 import 'keyboard_event.dart';
 import 'mouse_event.dart';
 
@@ -25,4 +26,16 @@ class PasteInputEvent extends InputEvent {
   final String text;
 
   const PasteInputEvent(this.text);
+}
+
+/// Colour-scheme change notification from the terminal.
+///
+/// Produced when DEC private mode 2031 is enabled and the terminal sends
+/// `CSI ? 997 ; <n> n` — either unsolicited or as the reply to a
+/// `CSI ? 996 n` query. It is parsed as its own event so the report can
+/// never leak into the application as keystrokes.
+class ColorSchemeInputEvent extends InputEvent {
+  final ColorSchemeNotice notice;
+
+  const ColorSchemeInputEvent(this.notice);
 }

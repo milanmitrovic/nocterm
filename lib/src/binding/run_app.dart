@@ -17,10 +17,22 @@ import 'run_app_stub.dart'
 /// - Writing to `/dev/tty` directly while redirecting stdout to `/dev/null`
 /// - Custom terminal emulation
 /// - Testing with mock backends
+///
+/// [enableColorSchemeUpdates] opts into DEC private mode 2031, which asks the
+/// terminal to report when its colour scheme changes. Notices arrive on
+/// [TerminalBinding.colorSchemeNotices]; see that stream's docs for why the
+/// payload should be treated as "colours changed, re-read" rather than as a
+/// reading. Off by default.
 Future<void> runApp(
   Component app, {
   bool enableHotReload = true,
   TerminalBackend? backend,
+  bool enableColorSchemeUpdates = false,
 }) {
-  return runAppImpl(app, enableHotReload: enableHotReload, backend: backend);
+  return runAppImpl(
+    app,
+    enableHotReload: enableHotReload,
+    backend: backend,
+    enableColorSchemeUpdates: enableColorSchemeUpdates,
+  );
 }

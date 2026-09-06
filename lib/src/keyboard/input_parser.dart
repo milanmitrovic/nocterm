@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../theme/color_scheme_notice.dart';
 import 'logical_key.dart';
 import 'keyboard_event.dart';
 import 'mouse_parser.dart';
@@ -110,6 +111,23 @@ class InputParser {
             return (MouseInputEvent(mouseEvent), 6);
           }
         }
+      }
+    }
+
+    // Colour-scheme report: ESC [ ? 997 ; <n> n
+    //
+    // Sent by terminals with DEC private mode 2031 enabled (and as the reply
+    // to a `CSI ? 996 n` query). Claimed here, ahead of the keyboard path, so
+    // it becomes a ColorSchemeInputEvent rather than leaking into the app as
+    // keystrokes. Any other `CSI ? … ` sequence falls through to the keyboard
+    // parser, which consumes unrecognised CSI sequences as before.
+    if (first == 0x1B &&
+        _buffer.length >= 3 &&
+        _buffer[1] == 0x5B &&
+        _buffer[2] == 0x3F) {
+      final colorScheme = _parseColorSchemeReport();
+      if (colorScheme != null) {
+        return colorScheme;
       }
     }
 
@@ -647,6 +665,45 @@ class InputParser {
 
     // Need more bytes
     return null;
+  }
+
+  /// Parse a colour-scheme report: `ESC [ ? 997 ; <value> n`.
+  ///
+  /// Returns null — leaving the bytes in the buffer — when the sequence is
+  /// incomplete, and null after consuming nothing when it is some other
+  /// `CSI ?` sequence (a DA reply, a DECRPM report), so the ordinary CSI
+  /// fallback still gets to consume those.
+  (InputEvent, int)? _parseColorSchemeReport() {
+    // _buffer[0..2] is already known to be ESC [ ?
+    var i = 3;
+    final modeStart = i;
+    while (i < _buffer.length && _buffer[i] >= 0x30 && _buffer[i] <= 0x39) {
+      i++;
+    }
+    if (i == modeStart) return null; // No numeric parameter.
+    if (i >= _buffer.length) return null; // Incomplete — wait for more.
+    final mode = int.tryParse(String.fromCharCodes(_buffer.sublist(modeStart, i)));
+    if (mode != 997) return null;
+
+    if (_buffer[i] != 0x3B) return null; // ';'
+    i++;
+
+    final valueStart = i;
+    while (i < _buffer.length && _buffer[i] >= 0x30 && _buffer[i] <= 0x39) {
+      i++;
+    }
+    if (i == valueStart) return null;
+    if (i >= _buffer.length) return null; // Incomplete — wait for more.
+    if (_buffer[i] != 0x6E) return null; // 'n'
+
+    final value =
+        int.tryParse(String.fromCharCodes(_buffer.sublist(valueStart, i)));
+    if (value == null) return null;
+
+    return (
+      ColorSchemeInputEvent(ColorSchemeNotice.fromReportedValue(value)),
+      i + 1,
+    );
   }
 
   (KeyboardEvent, int)? _parseSS3Sequence() {

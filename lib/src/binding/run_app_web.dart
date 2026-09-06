@@ -10,6 +10,7 @@ Future<void> runAppImpl(
   Component app, {
   bool enableHotReload = true,
   TerminalBackend? backend,
+  bool enableColorSchemeUpdates = false,
 }) async {
   // Wrap the user's app with DebugOverlay so Ctrl+G toggle works out of the box
   final wrappedApp = DebugOverlay(child: app);
@@ -19,7 +20,7 @@ Future<void> runAppImpl(
   // TerminalBinding is exported from package:nocterm/nocterm.dart
   final binding = TerminalBinding(terminal);
 
-  binding.initialize();
+  binding.initialize(enableColorSchemeUpdates: enableColorSchemeUpdates);
   binding.attachRootComponent(wrappedApp);
 
   // Hot reload not supported on web

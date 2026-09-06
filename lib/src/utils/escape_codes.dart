@@ -12,6 +12,14 @@ class EscapeCodes {
   static const moveCursorHome = '\x1b[H';
   static const alternateBuffer = '\x1b[?1049h';
   static const mainBuffer = '\x1b[?1049l';
+
+  /// DSR query for the terminal's current colour scheme.
+  ///
+  /// The reply comes back as `CSI ? 997 ; <n> n`, the same shape as an
+  /// unsolicited mode-2031 notification. Send it once after enabling
+  /// `EscapeCodes.enable.colorSchemeUpdates` so an app gets an initial answer
+  /// instead of waiting for the user to change themes.
+  static const queryColorScheme = '\x1b[?996n';
 }
 
 class _Disable {
@@ -28,6 +36,13 @@ class _Disable {
 
   /// Reset xterm modifyOtherKeys mode to disabled.
   String get modifyOtherKeys => '\x1B[>4;0m';
+
+  /// Stop colour-scheme change notifications (DEC private mode 2031).
+  ///
+  /// Deliberately absent from [values]: that list is written
+  /// unconditionally at teardown, and mode 2031 is opt-in, so it is
+  /// disabled only by whoever enabled it.
+  String get colorSchemeUpdates => '\x1B[?2031l';
 
   List<String> get values => [
         motionTracking,
@@ -56,6 +71,14 @@ class _Enable {
 
   /// Enable xterm modifyOtherKeys mode (level 1).
   String get modifyOtherKeys => '\x1B[>4;1m';
+
+  /// Ask the terminal to report colour-scheme changes (DEC private mode
+  /// 2031). While enabled the terminal sends `CSI ? 997 ; <n> n` whenever
+  /// its palette flips between dark and light.
+  ///
+  /// Deliberately absent from [values]: this is opt-in, and [values] is
+  /// applied to every app at startup.
+  String get colorSchemeUpdates => '\x1B[?2031h';
 
   List<String> get values => [
         motionTracking,
