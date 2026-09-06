@@ -130,6 +130,7 @@ class TextField extends StatefulComponent {
     this.onKeyEvent,
     this.enabled = true,
     this.cursorColor,
+    this.cursorTextColor,
     this.cursorStyle = CursorStyle.block,
     this.cursorBlinkRate,
     this.selectionColor,
@@ -185,6 +186,20 @@ class TextField extends StatefulComponent {
   ///
   /// If null, defaults to the theme's [TuiThemeData.primary] color.
   final Color? cursorColor;
+
+  /// The color of the character sitting UNDER a block cursor.
+  ///
+  /// [CursorStyle.block] and [CursorStyle.blockOutline] paint the cell with
+  /// [cursorColor] as its background, so the character needs a foreground
+  /// that contrasts with it. If null, defaults to the theme's
+  /// [TuiThemeData.onPrimary] — the colour the theme already designates for
+  /// text drawn on [TuiThemeData.primary], which is what [cursorColor]
+  /// itself defaults to. Set it explicitly whenever [cursorColor] is a
+  /// colour of your own.
+  ///
+  /// Has no effect on [CursorStyle.underline], which does not repaint the
+  /// character.
+  final Color? cursorTextColor;
   final CursorStyle cursorStyle;
   final Duration? cursorBlinkRate;
 
@@ -950,6 +965,12 @@ class _TextFieldState extends State<TextField> {
     // Resolve colors from theme if not provided
     final theme = TuiTheme.of(context);
     final effectiveCursorColor = component.cursorColor ?? theme.primary;
+    // The character under a block cursor is drawn ON the cursor colour, so
+    // its default is the theme's counterpart to primary rather than a
+    // hard-coded black — a light theme (or a light cursor colour) makes
+    // black-on-primary unreadable.
+    final effectiveCursorTextColor =
+        component.cursorTextColor ?? theme.onPrimary;
     final effectiveSelectionColor =
         component.selectionColor ?? theme.primary.withOpacity(0.4);
 
@@ -963,6 +984,7 @@ class _TextFieldState extends State<TextField> {
       viewOffset: _viewOffset,
       cursorVisible: _cursorVisible && isFocused && component.showCursor,
       cursorColor: effectiveCursorColor,
+      cursorTextColor: effectiveCursorTextColor,
       cursorStyle: component.cursorStyle,
       selectionColor: effectiveSelectionColor,
       textAlign: component.textAlign,
@@ -1013,6 +1035,7 @@ class _TextFieldContent extends SingleChildRenderObjectComponent {
     required this.viewOffset,
     required this.cursorVisible,
     this.cursorColor,
+    this.cursorTextColor,
     this.cursorStyle = CursorStyle.block,
     this.selectionColor,
     required this.textAlign,
@@ -1032,6 +1055,7 @@ class _TextFieldContent extends SingleChildRenderObjectComponent {
   final int viewOffset;
   final bool cursorVisible;
   final Color? cursorColor;
+  final Color? cursorTextColor;
   final CursorStyle cursorStyle;
   final Color? selectionColor;
   final TextAlign textAlign;
@@ -1053,6 +1077,7 @@ class _TextFieldContent extends SingleChildRenderObjectComponent {
       viewOffset: viewOffset,
       cursorVisible: cursorVisible,
       cursorColor: cursorColor,
+      cursorTextColor: cursorTextColor,
       cursorStyle: cursorStyle,
       selectionColor: selectionColor,
       textAlign: textAlign,
@@ -1077,6 +1102,7 @@ class _TextFieldContent extends SingleChildRenderObjectComponent {
       ..viewOffset = viewOffset
       ..cursorVisible = cursorVisible
       ..cursorColor = cursorColor
+      ..cursorTextColor = cursorTextColor
       ..cursorStyle = cursorStyle
       ..selectionColor = selectionColor
       ..textAlign = textAlign
@@ -1098,6 +1124,7 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
     required int viewOffset,
     required bool cursorVisible,
     Color? cursorColor,
+    Color? cursorTextColor,
     CursorStyle cursorStyle = CursorStyle.block,
     Color? selectionColor,
     required TextAlign textAlign,
@@ -1114,6 +1141,7 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
         _viewOffset = viewOffset,
         _cursorVisible = cursorVisible,
         _cursorColor = cursorColor,
+        _cursorTextColor = cursorTextColor,
         _cursorStyle = cursorStyle,
         _selectionColor = selectionColor,
         _textAlign = textAlign,
@@ -1136,6 +1164,7 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
   int _verticalViewOffset = 0;
   bool _cursorVisible;
   Color? _cursorColor;
+  Color? _cursorTextColor;
   CursorStyle _cursorStyle;
   Color? _selectionColor;
   TextAlign _textAlign;
@@ -1232,6 +1261,13 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
   set cursorColor(Color? value) {
     if (_cursorColor != value) {
       _cursorColor = value;
+      markNeedsPaint();
+    }
+  }
+
+  set cursorTextColor(Color? value) {
+    if (_cursorTextColor != value) {
+      _cursorTextColor = value;
       markNeedsPaint();
     }
   }
@@ -1863,7 +1899,7 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
       case CursorStyle.block:
         // Filled block - traditional terminal cursor
         final blockStyle = TextStyle(
-          color: Colors.black,
+          color: _cursorTextColor ?? Colors.black,
           backgroundColor: cursorColor,
         );
         canvas.drawText(position, charUnderCursor, style: blockStyle);
@@ -1882,7 +1918,7 @@ class RenderTextField extends RenderObject with MouseTrackerAnnotationProvider {
       case CursorStyle.blockOutline:
         // Draw block outline - invert the colors
         final outlineStyle = TextStyle(
-          color: Colors.black,
+          color: _cursorTextColor ?? Colors.black,
           backgroundColor: cursorColor,
         );
         canvas.drawText(position, charUnderCursor, style: outlineStyle);
