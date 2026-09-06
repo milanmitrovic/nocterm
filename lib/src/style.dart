@@ -98,6 +98,21 @@ class Color {
   /// Whether this is the default terminal color
   final bool isDefault;
 
+  /// The 16-colour ANSI palette slot this color names, or null for an
+  /// ordinary RGB color.
+  ///
+  /// When set, [toAnsi] emits the classic SGR 30–37/90–97 (foreground) and
+  /// 40–47/100–107 (background) codes, so the terminal paints the cell from
+  /// the *user's* palette — which is the point of naming a slot instead of a
+  /// shade. [red]/[green]/[blue] then hold xterm's default palette values as
+  /// an APPROXIMATION, used only where an RGB value is unavoidable (blending
+  /// underneath a translucent color, luminance checks). They are not what the
+  /// terminal will draw.
+  final int? ansiIndex;
+
+  /// Whether this color names a slot in the terminal's 16-colour palette.
+  bool get isAnsiIndexed => ansiIndex != null;
+
   /// Creates a color from an integer value.
   ///
   /// The value should be in 0xRRGGBB format where:
@@ -111,7 +126,8 @@ class Color {
         red = (value >> 16) & 0xFF,
         green = (value >> 8) & 0xFF,
         blue = value & 0xFF,
-        isDefault = false;
+        isDefault = false,
+        ansiIndex = null;
 
   /// Creates the default terminal color
   const Color._default()
@@ -119,7 +135,66 @@ class Color {
         red = 0,
         green = 0,
         blue = 0,
-        isDefault = true;
+        isDefault = true,
+        ansiIndex = null;
+
+  /// Creates a color naming a slot in the terminal's 16-colour palette.
+  ///
+  /// [index] runs 0–15: 0–7 are the standard colours (black, red, green,
+  /// yellow, blue, magenta, cyan, white) and 8–15 their bright variants.
+  ///
+  /// This is not the same as picking the equivalent shade with
+  /// [Color.fromRGB]. An indexed colour is resolved by the terminal from the
+  /// user's own palette, so it follows their theme — what you want when the
+  /// app should look native wherever it runs, and what you do not want when
+  /// a specific shade matters.
+  ///
+  /// It is an ordinary, fully opaque set colour: [isDefault] is false (it
+  /// paints, rather than resetting to the terminal's default, which is
+  /// [Color.defaultColor] / SGR 39/49), and canvas code that preserves an
+  /// existing background when the incoming style names none treats it like
+  /// any other colour.
+  ///
+  /// [withOpacity], [withAlpha] with a translucent value and [lerp] all drop
+  /// the index and fall back to the approximate RGB (see [ansiIndex]) — a
+  /// translucent colour has to be pre-blended into a shade, and a shade is
+  /// not a palette slot.
+  ///
+  /// Instances are canonical: `Color.ansi(4)` returns the same object every
+  /// time. Throws [RangeError] outside 0–15.
+  factory Color.ansi(int index) {
+    RangeError.checkValueInInterval(index, 0, 15, 'index',
+        'ANSI palette indices run 0-15 (0-7 standard, 8-15 bright)');
+    return _ansiPalette[index];
+  }
+
+  /// An indexed palette colour with its xterm-default RGB approximation.
+  const Color._ansi(this.ansiIndex, this.red, this.green, this.blue)
+      : alpha = 255,
+        isDefault = false;
+
+  /// The 16 palette slots, carrying xterm's default RGB values.
+  ///
+  /// Only an approximation — the terminal renders these from the user's
+  /// palette — but a defined one, so blending and luminance stay sane.
+  static const List<Color> _ansiPalette = [
+    Color._ansi(0, 0, 0, 0), //          black
+    Color._ansi(1, 205, 0, 0), //        red
+    Color._ansi(2, 0, 205, 0), //        green
+    Color._ansi(3, 205, 205, 0), //      yellow
+    Color._ansi(4, 0, 0, 238), //        blue
+    Color._ansi(5, 205, 0, 205), //      magenta
+    Color._ansi(6, 0, 205, 205), //      cyan
+    Color._ansi(7, 229, 229, 229), //    white
+    Color._ansi(8, 127, 127, 127), //    bright black
+    Color._ansi(9, 255, 0, 0), //        bright red
+    Color._ansi(10, 0, 255, 0), //       bright green
+    Color._ansi(11, 255, 255, 0), //     bright yellow
+    Color._ansi(12, 92, 92, 255), //     bright blue
+    Color._ansi(13, 255, 0, 255), //     bright magenta
+    Color._ansi(14, 0, 255, 255), //     bright cyan
+    Color._ansi(15, 255, 255, 255), //   bright white
+  ];
 
   /// Creates a color from red, green, and blue components.
   ///
@@ -130,7 +205,8 @@ class Color {
         assert(red >= 0 && red <= 255),
         assert(green >= 0 && green <= 255),
         assert(blue >= 0 && blue <= 255),
-        isDefault = false;
+        isDefault = false,
+        ansiIndex = null;
 
   /// Creates a color from alpha, red, green, and blue components.
   ///
@@ -144,7 +220,8 @@ class Color {
         assert(red >= 0 && red <= 255),
         assert(green >= 0 && green <= 255),
         assert(blue >= 0 && blue <= 255),
-        isDefault = false;
+        isDefault = false,
+        ansiIndex = null;
 
   /// Converts this color to an ANSI escape code.
   ///
@@ -157,6 +234,18 @@ class Color {
         return '\x1b[49m'; // Reset background to default
       }
       return '\x1b[39m'; // Reset foreground to default
+    }
+    final slot = ansiIndex;
+    if (slot != null) {
+      // A palette slot, not a shade: emit the classic SGR codes so the
+      // terminal resolves it against the user's own palette. Never
+      // truecolor, and never quantized — both would pin down the shade,
+      // which is exactly what naming a slot avoids.
+      //   0-7  -> 30-37 (fg) / 40-47 (bg)
+      //   8-15 -> 90-97 (fg) / 100-107 (bg)
+      final base =
+          slot < 8 ? (background ? 40 : 30) : (background ? 100 : 90);
+      return '\x1b[${base + (slot & 7)}m';
     }
     if (supportsTruecolor()) {
       if (background) {
@@ -195,8 +284,16 @@ class Color {
   /// Returns a new color with the given alpha value.
   ///
   /// The [alpha] must be between 0 and 255.
+  ///
+  /// An indexed colour asked for full opacity — which it already has — is
+  /// returned unchanged rather than being flattened into its approximate
+  /// RGB. Any other alpha drops the index: a translucent colour has to be
+  /// pre-blended into a shade, and a shade is not a palette slot.
   Color withAlpha(int alpha) {
     assert(alpha >= 0 && alpha <= 255);
+    if (ansiIndex != null && alpha == this.alpha) {
+      return this;
+    }
     return Color.fromARGB(alpha, red, green, blue);
   }
 
@@ -245,6 +342,7 @@ class Color {
     if (other.runtimeType != runtimeType) return false;
     return other is Color &&
         other.isDefault == isDefault &&
+        other.ansiIndex == ansiIndex &&
         other.alpha == alpha &&
         other.red == red &&
         other.green == green &&
@@ -286,14 +384,16 @@ class Color {
   }
 
   @override
-  int get hashCode => Object.hash(alpha, red, green, blue, isDefault);
+  int get hashCode => Object.hash(alpha, red, green, blue, isDefault, ansiIndex);
 
   @override
   String toString() => isDefault
       ? 'Color.defaultColor'
-      : alpha == 255
-          ? 'Color(r: $red, g: $green, b: $blue)'
-          : 'Color(a: $alpha, r: $red, g: $green, b: $blue)';
+      : ansiIndex != null
+          ? 'Color.ansi($ansiIndex)'
+          : alpha == 255
+              ? 'Color(r: $red, g: $green, b: $blue)'
+              : 'Color(a: $alpha, r: $red, g: $green, b: $blue)';
 }
 
 /// A color represented using [alpha], [hue], [saturation], and [value].
