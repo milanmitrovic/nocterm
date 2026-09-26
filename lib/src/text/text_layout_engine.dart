@@ -271,7 +271,12 @@ class TextLayoutEngine {
   }
 
   /// Split text into words, preserving spaces and considering break opportunities
-  static List<String> _splitIntoWords(String text) {
+  static List<String> _splitIntoWords(String text) =>
+      UnicodeWidth.isPrintableAscii(text)
+          ? _splitAsciiIntoWords(text)
+          : _splitGraphemes(text);
+
+  static List<String> _splitGraphemes(String text) {
     final List<String> words = [];
     final StringBuffer currentWord = StringBuffer();
 
@@ -300,6 +305,43 @@ class TextLayoutEngine {
 
     return words;
   }
+
+  /// [_splitIntoWords] for printable ASCII, by code unit.
+  ///
+  /// The same tokens, byte for byte: in 0x20..0x7E every code unit is a
+  /// grapheme, and of [_canBreakAfter]'s rules only the space, hyphen and
+  /// slash ones can fire (no ZWSP, no CJK). A break emits the word so far;
+  /// a space is then its own token and starts nothing; any other character
+  /// starts the next word. A leading space (no previous grapheme, so no
+  /// break) rides into the first word exactly as it does there.
+  static List<String> _splitAsciiIntoWords(String text) {
+    final words = <String>[];
+    var start = 0;
+    for (var i = 1; i < text.length; i++) {
+      final c = text.codeUnitAt(i);
+      final p = text.codeUnitAt(i - 1);
+      if (c == 0x20 || p == 0x20 || p == 0x2D || p == 0x2F) {
+        if (start < i) words.add(text.substring(start, i));
+        if (c == 0x20) {
+          words.add(' ');
+          start = i + 1;
+        } else {
+          start = i;
+        }
+      }
+    }
+    if (start < text.length) words.add(text.substring(start));
+    return words;
+  }
+
+  /// The slow path of [_splitIntoWords], reachable for a test that
+  /// checks the ASCII fast path returns the very same tokens.
+  static List<String> debugSplitByGraphemes(String text) =>
+      _splitGraphemes(text);
+
+  /// The ASCII fast path, for the same test.
+  static List<String> debugSplitAscii(String text) =>
+      _splitAsciiIntoWords(text);
 
   /// Check if we can break between two graphemes
   static bool _canBreakAfter(String? prev, String next) {

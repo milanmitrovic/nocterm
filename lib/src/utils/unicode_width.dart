@@ -9,6 +9,12 @@ class UnicodeWidth {
   static int stringWidth(String text) {
     if (text.isEmpty) return 0;
 
+    // Printable ASCII: every code unit is its own grapheme of width 1
+    // (`runeWidth` answers 1 for 0x20..0x7E), so the width is the
+    // length. The grapheme walk below allocates a string per character,
+    // which on a kilobyte paragraph is most of what wrapping it costs.
+    if (isPrintableAscii(text)) return text.length;
+
     // Use grapheme clusters for accurate width calculation
     int totalWidth = 0;
     for (final grapheme in text.characters) {
@@ -16,6 +22,16 @@ class UnicodeWidth {
     }
 
     return totalWidth;
+  }
+
+  /// Whether every code unit of [text] is printable ASCII (0x20..0x7E) —
+  /// the range where one code unit is one grapheme is one column.
+  static bool isPrintableAscii(String text) {
+    for (var i = 0; i < text.length; i++) {
+      final c = text.codeUnitAt(i);
+      if (c < 0x20 || c > 0x7E) return false;
+    }
+    return true;
   }
 
   /// Calculate the display width of a single grapheme cluster
