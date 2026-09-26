@@ -27,6 +27,7 @@ class RenderText extends RenderObject with Selectable {
   set text(String value) {
     if (_text == value) return;
     _text = value;
+    _textLayoutStale = true;
     markNeedsLayout();
   }
 
@@ -43,6 +44,7 @@ class RenderText extends RenderObject with Selectable {
   set softWrap(bool value) {
     if (_softWrap == value) return;
     _softWrap = value;
+    _textLayoutStale = true;
     markNeedsLayout();
   }
 
@@ -51,6 +53,7 @@ class RenderText extends RenderObject with Selectable {
   set overflow(TextOverflow value) {
     if (_overflow == value) return;
     _overflow = value;
+    _textLayoutStale = true;
     markNeedsLayout();
   }
 
@@ -67,10 +70,18 @@ class RenderText extends RenderObject with Selectable {
   set maxLines(int? value) {
     if (_maxLines == value) return;
     _maxLines = value;
+    _textLayoutStale = true;
     markNeedsLayout();
   }
 
   TextLayoutResult? _layoutResult;
+
+  /// Whether a setter changed an input of the text layout since the last
+  /// one ran. With [_laidOutWidth] this is the whole key: the engine reads
+  /// the text, softWrap, overflow, maxLines and the max width, and nothing
+  /// else (textAlign is applied at paint).
+  bool _textLayoutStale = true;
+  int? _laidOutWidth;
 
   @override
   String get selectableText => _text;
@@ -92,15 +103,24 @@ class RenderText extends RenderObject with Selectable {
     // Debug: print constraint info
     // print('RenderText layout: text="$_text", constraints=$constraints, maxWidth=$maxWidth');
 
-    final config = TextLayoutConfig(
-      softWrap: _softWrap,
-      overflow: _overflow,
-      textAlign: _textAlign,
-      maxLines: _maxLines,
-      maxWidth: maxWidth,
-    );
+    // With no relayout boundaries, any dirty descendant re-lays out every
+    // text on screen. Only redo the text layout when its inputs moved;
+    // otherwise re-constrain the size against the new constraints.
+    if (_textLayoutStale ||
+        _layoutResult == null ||
+        _laidOutWidth != maxWidth) {
+      final config = TextLayoutConfig(
+        softWrap: _softWrap,
+        overflow: _overflow,
+        textAlign: _textAlign,
+        maxLines: _maxLines,
+        maxWidth: maxWidth,
+      );
 
-    _layoutResult = TextLayoutEngine.layout(_text, config);
+      _layoutResult = TextLayoutEngine.layout(_text, config);
+      _textLayoutStale = false;
+      _laidOutWidth = maxWidth;
+    }
 
     size = constraints.constrain(Size(
       _layoutResult!.actualWidth.toDouble(),

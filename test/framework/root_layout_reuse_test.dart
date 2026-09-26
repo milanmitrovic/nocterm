@@ -1,4 +1,6 @@
 import 'package:nocterm/nocterm.dart';
+import 'package:nocterm/src/components/render_paragraph.dart';
+import 'package:nocterm/src/components/render_text.dart';
 import 'package:nocterm/src/framework/terminal_canvas.dart';
 import 'package:test/test.dart';
 
@@ -97,6 +99,65 @@ void main() {
         expect(NoctermTestBinding.instance.hasScheduledFrame, isFalse);
         expect(tester.terminalState.containsText('inner 1'), isTrue);
       });
+    });
+  });
+
+  group('text layout is memoised on its inputs', () {
+    test('RenderParagraph keeps its layout under equal constraints', () {
+      final p = RenderParagraph(text: const TextSpan(text: 'hello world'));
+      p.layout(const BoxConstraints(maxWidth: 20, maxHeight: 5));
+      final first = p.selectableLayout;
+
+      // A NEW constraints object with the same width: what every relayout
+      // from the root hands a paragraph whose text did not change.
+      p.markNeedsLayout();
+      p.layout(const BoxConstraints(minWidth: 3, maxWidth: 20, maxHeight: 9));
+      expect(identical(p.selectableLayout, first), isTrue);
+      expect(p.size, const Size(11, 1));
+
+      p.layout(const BoxConstraints(maxWidth: 5, maxHeight: 5));
+      expect(identical(p.selectableLayout, first), isFalse);
+      expect(p.selectableLayout!.lines, ['hello', 'world']);
+
+      // A change of STYLE alone keeps the text layout.
+      final plain = p.selectableLayout;
+      p.text = const TextSpan(
+        text: 'hello world',
+        style: TextStyle(color: Colors.red),
+      );
+      p.layout(const BoxConstraints(maxWidth: 5, maxHeight: 5));
+      expect(identical(p.selectableLayout, plain), isTrue);
+
+      final narrow = p.selectableLayout;
+      p.text = const TextSpan(text: 'bye');
+      p.layout(const BoxConstraints(maxWidth: 5, maxHeight: 5));
+      expect(identical(p.selectableLayout, narrow), isFalse);
+      expect(p.selectableLayout!.lines, ['bye']);
+
+      final bye = p.selectableLayout;
+      p.maxLines = 1;
+      p.layout(const BoxConstraints(maxWidth: 5, maxHeight: 5));
+      expect(identical(p.selectableLayout, bye), isFalse);
+    });
+
+    test('RenderText keeps its layout under equal constraints', () {
+      final t = RenderText(text: 'hello world');
+      t.layout(const BoxConstraints(maxWidth: 20, maxHeight: 5));
+      final first = t.selectableLayout;
+
+      t.markNeedsLayout();
+      t.layout(const BoxConstraints(maxWidth: 20, maxHeight: 5));
+      expect(identical(t.selectableLayout, first), isTrue);
+
+      t.softWrap = false;
+      t.layout(const BoxConstraints(maxWidth: 20, maxHeight: 5));
+      expect(identical(t.selectableLayout, first), isFalse);
+
+      final nowrap = t.selectableLayout;
+      t.text = 'other';
+      t.layout(const BoxConstraints(maxWidth: 20, maxHeight: 5));
+      expect(identical(t.selectableLayout, nowrap), isFalse);
+      expect(t.selectableLayout!.lines, ['other']);
     });
   });
 }

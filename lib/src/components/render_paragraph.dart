@@ -28,6 +28,7 @@ class RenderParagraph extends RenderObject with Selectable {
     if (_text == value) return;
     _text = value;
     _cachedSegments = null;
+    _spansStale = true;
     markNeedsLayout();
   }
 
@@ -44,6 +45,7 @@ class RenderParagraph extends RenderObject with Selectable {
   set softWrap(bool value) {
     if (_softWrap == value) return;
     _softWrap = value;
+    _textLayoutStale = true;
     markNeedsLayout();
   }
 
@@ -52,6 +54,7 @@ class RenderParagraph extends RenderObject with Selectable {
   set overflow(TextOverflow value) {
     if (_overflow == value) return;
     _overflow = value;
+    _textLayoutStale = true;
     markNeedsLayout();
   }
 
@@ -60,8 +63,23 @@ class RenderParagraph extends RenderObject with Selectable {
   set maxLines(int? value) {
     if (_maxLines == value) return;
     _maxLines = value;
+    _textLayoutStale = true;
     markNeedsLayout();
   }
+
+  /// Whether softWrap, overflow or maxLines changed since the last text
+  /// layout. With [_laidOutWidth] and [_laidOutPlainText] this is the
+  /// whole key: the layout engine reads the plain text, those three and
+  /// the max width, and nothing else (textAlign is applied at paint).
+  bool _textLayoutStale = true;
+  int? _laidOutWidth;
+  String? _laidOutPlainText;
+
+  /// Whether [text] changed since the styled lines were mapped. A change
+  /// of STYLE alone (a selection highlight moving onto this row) keeps
+  /// the plain text, so it re-maps the segments onto the same lines and
+  /// skips the text layout.
+  bool _spansStale = true;
 
   // Cache the styled segments to avoid recomputing them
   List<StyledTextSegment>? _cachedSegments;
@@ -84,21 +102,39 @@ class RenderParagraph extends RenderObject with Selectable {
         ? constraints.maxWidth.toInt()
         : double.maxFinite.toInt();
 
-    // Get the plain text for layout calculation
-    final plainText = _text.toPlainText();
+    // With no relayout boundaries, any dirty descendant re-lays out every
+    // paragraph on screen. Only redo the text layout when its inputs moved;
+    // otherwise re-constrain the size against the new constraints.
+    if (_spansStale ||
+        _textLayoutStale ||
+        _layoutResult == null ||
+        _styledLines == null ||
+        _laidOutWidth != maxWidth) {
+      // Get the plain text for layout calculation
+      final plainText = _text.toPlainText();
 
-    final config = TextLayoutConfig(
-      softWrap: _softWrap,
-      overflow: _overflow,
-      textAlign: _textAlign,
-      maxLines: _maxLines,
-      maxWidth: maxWidth,
-    );
+      if (_textLayoutStale ||
+          _layoutResult == null ||
+          _laidOutWidth != maxWidth ||
+          _laidOutPlainText != plainText) {
+        final config = TextLayoutConfig(
+          softWrap: _softWrap,
+          overflow: _overflow,
+          textAlign: _textAlign,
+          maxLines: _maxLines,
+          maxWidth: maxWidth,
+        );
 
-    _layoutResult = TextLayoutEngine.layout(plainText, config);
+        _layoutResult = TextLayoutEngine.layout(plainText, config);
+        _textLayoutStale = false;
+        _laidOutWidth = maxWidth;
+        _laidOutPlainText = plainText;
+      }
 
-    // Now map the styled segments to the laid out lines
-    _styledLines = _mapSegmentsToLines(_segments, _layoutResult!.lines);
+      // Now map the styled segments to the laid out lines
+      _styledLines = _mapSegmentsToLines(_segments, _layoutResult!.lines);
+      _spansStale = false;
+    }
 
     size = constraints.constrain(Size(
       _layoutResult!.actualWidth.toDouble(),
