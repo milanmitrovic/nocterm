@@ -13,6 +13,10 @@ typedef IndexedWidgetBuilder = Component? Function(
 /// Signature for a function that provides the item count.
 typedef ItemCountGetter = int Function();
 
+/// Signature for [ListView.itemExtentOf]: the extent item [index] is KNOWN
+/// to occupy, or null when only a layout can tell.
+typedef ItemExtentOf = double? Function(int index);
+
 /// A scrollable list of widgets arranged linearly.
 ///
 /// ListView is the most commonly used scrolling widget. It displays its
@@ -35,7 +39,8 @@ class ListView extends StatefulComponent {
     List<Component> children = const [],
   })  : itemCount = children.length,
         itemBuilder = ((context, index) => children[index]),
-        separatorBuilder = null;
+        separatorBuilder = null,
+        itemExtentOf = null;
 
   /// Creates a scrollable, linear array of widgets that are created on demand.
   ///
@@ -54,6 +59,7 @@ class ListView extends StatefulComponent {
     this.cacheExtent = 5.0,
     required this.itemBuilder,
     this.itemCount,
+    this.itemExtentOf,
   }) : separatorBuilder = null;
 
   /// Creates a scrollable, linear array of widgets with a separator between each item.
@@ -69,7 +75,8 @@ class ListView extends StatefulComponent {
     required this.itemBuilder,
     required this.separatorBuilder,
     this.itemCount,
-  }) : itemExtent = null;
+  })  : itemExtent = null,
+        itemExtentOf = null;
 
   /// The axis along which the scroll view scrolls.
   final Axis scrollDirection;
@@ -134,6 +141,25 @@ class ListView extends StatefulComponent {
 
   /// The total number of items. If null, the list is infinite.
   final int? itemCount;
+
+  /// The extent each item is KNOWN to occupy, or null for "lay it out and
+  /// see" — used only when [lazy] is true, [itemCount] is non-null and
+  /// there is neither an [itemExtent] nor a separator.
+  ///
+  /// A lazy list of VARIABLE-extent items otherwise has no way to find the
+  /// first visible item without laying out everything above it, and no way
+  /// to know its total extent without laying out everything below it — so
+  /// it estimates, and the scroll range drifts. With this, the offsets are
+  /// a prefix sum of declared extents (arithmetic, no layout), and only the
+  /// items it declines to answer for are laid out off screen to measure
+  /// them. The result is EXACTLY the eager layout's geometry as long as
+  /// every declaration is true, at the cost of one call per item instead
+  /// of one layout per item.
+  ///
+  /// A declared item is laid out with its extent as its maximum, so a
+  /// wrong (too small) declaration clips the item rather than overlapping
+  /// its neighbours. Declare only what is certain.
+  final ItemExtentOf? itemExtentOf;
 
   @override
   State<ListView> createState() => _ListViewState();
@@ -230,6 +256,7 @@ class _ListViewState extends State<ListView> {
       itemBuilder: component.itemBuilder,
       separatorBuilder: component.separatorBuilder,
       itemCount: component.itemCount,
+      itemExtentOf: component.itemExtentOf,
     );
 
     // Wrap with Focusable for keyboard scrolling if enabled
@@ -258,6 +285,7 @@ class _ListViewport extends RenderObjectComponent {
     required this.itemBuilder,
     this.separatorBuilder,
     this.itemCount,
+    this.itemExtentOf,
   });
 
   final Axis scrollDirection;
@@ -270,6 +298,7 @@ class _ListViewport extends RenderObjectComponent {
   final IndexedWidgetBuilder itemBuilder;
   final IndexedWidgetBuilder? separatorBuilder;
   final int? itemCount;
+  final ItemExtentOf? itemExtentOf;
 
   @override
   Element createElement() => _ListViewportElement(this);
@@ -872,7 +901,21 @@ class RenderListViewport extends RenderObject with ScrollableRenderObjectMixin {
 
     double totalExtent = 0;
 
-    if (_lazy) {
+    final extentOf = component.itemExtentOf;
+    _declaredOffsets = null;
+    if (_lazy &&
+        extentOf != null &&
+        itemExtent == null &&
+        !hasSeparators &&
+        itemCount != null) {
+      // Lazy over DECLARED extents: exact geometry, viewport-sized layout.
+      totalExtent = _performDeclaredLayout(
+        viewportExtent: viewportExtent,
+        childConstraints: childConstraints,
+        itemCount: itemCount,
+        extentOf: extentOf,
+      );
+    } else if (_lazy) {
       // Lazy mode: only build visible children
       totalExtent = _performLazyLayout(
         viewportExtent: viewportExtent,
@@ -1084,6 +1127,103 @@ class RenderListViewport extends RenderObject with ScrollableRenderObjectMixin {
       // Unknown count or no measurements yet - use what we've built
       return currentPosition;
     }
+  }
+
+  /// Item start offsets from the last declared-extent layout, with the
+  /// total extent as the final entry; null when the last layout was not
+  /// one. Lets [getItemOffsetAndExtent] answer for items never built.
+  List<double>? _declaredOffsets;
+
+  /// Lazy layout over [ListView.itemExtentOf].
+  ///
+  /// Walks every index once for its extent — a call for a declared item, a
+  /// layout only for one the callback declines — so the offsets are the
+  /// eager layout's offsets exactly. Then builds and lays out only the
+  /// items overlapping the viewport plus [cacheExtent].
+  double _performDeclaredLayout({
+    required double viewportExtent,
+    required BoxConstraints childConstraints,
+    required int itemCount,
+    required ItemExtentOf extentOf,
+  }) {
+    final scrollOffset = _controller.offset;
+    final cacheStart =
+        (scrollOffset - _cacheExtent).clamp(0.0, double.infinity);
+    final cacheEnd = scrollOffset + viewportExtent + _cacheExtent;
+
+    final offsets = List<double>.filled(itemCount + 1, 0.0);
+    final declared = List<double?>.filled(itemCount, null);
+    // Items the callback declined, already laid out to measure them.
+    final measured = <int, RenderObject>{};
+    var count = itemCount;
+    var position = 0.0;
+    for (var i = 0; i < itemCount; i++) {
+      offsets[i] = position;
+      final extent = extentOf(i);
+      if (extent != null) {
+        declared[i] = extent;
+        position += extent;
+        continue;
+      }
+      final renderObject = _buildAndLayoutChild(
+        index: i,
+        childConstraints: childConstraints,
+        layoutOffset: position,
+      );
+      if (renderObject == null) {
+        count = i;
+        break;
+      }
+      measured[i] = renderObject;
+      position += (renderObject.parentData as ListViewParentData).extent!;
+    }
+    offsets[count] = position;
+    _declaredOffsets =
+        count == itemCount ? offsets : offsets.sublist(0, count + 1);
+
+    // First item whose end lies past the cache start (binary search).
+    var lo = 0;
+    var hi = count;
+    while (lo < hi) {
+      final mid = (lo + hi) >> 1;
+      if (offsets[mid + 1] > cacheStart) {
+        hi = mid;
+      } else {
+        lo = mid + 1;
+      }
+    }
+
+    _firstBuiltIndex = lo;
+    _lastBuiltIndex = lo;
+    for (var i = lo; i < count && offsets[i] < cacheEnd; i++) {
+      final extent = declared[i];
+      final renderObject = measured[i] ??
+          _buildAndLayoutChild(
+            index: i,
+            childConstraints: scrollDirection == Axis.vertical
+                ? BoxConstraints(
+                    minWidth: childConstraints.minWidth,
+                    maxWidth: childConstraints.maxWidth,
+                    maxHeight: extent!,
+                  )
+                : BoxConstraints(
+                    minHeight: childConstraints.minHeight,
+                    maxHeight: childConstraints.maxHeight,
+                    maxWidth: extent!,
+                  ),
+            layoutOffset: offsets[i],
+            extentOverride: extent,
+          );
+      if (renderObject == null) break;
+      final childExtent = offsets[i + 1] - offsets[i];
+      if (offsets[i] + childExtent > scrollOffset &&
+          offsets[i] < scrollOffset + viewportExtent) {
+        _visibleChildren.add(_ChildLayoutInfo(renderObject: renderObject));
+      }
+      _addToAllChildren(renderObject);
+      _lastBuiltIndex = i;
+    }
+    return position;
   }
 
   /// Performs eager layout - builds all children for accurate extent
@@ -1408,6 +1548,12 @@ class RenderListViewport extends RenderObject with ScrollableRenderObjectMixin {
           parentData?.extent != null) {
         return (parentData!.layoutOffset!, parentData.extent!);
       }
+    }
+
+    // Declared extents answer for items that were never built.
+    final offsets = _declaredOffsets;
+    if (offsets != null && index >= 0 && index < offsets.length - 1) {
+      return (offsets[index], offsets[index + 1] - offsets[index]);
     }
 
     // If item is not found, try to estimate if we have fixed itemExtent
