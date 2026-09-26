@@ -265,6 +265,42 @@ class ParentData {
 /// The render tree is separate from the component tree and is optimized for
 /// layout and painting operations.
 abstract class RenderObject {
+  /// How many [performLayout] calls are on the stack right now.
+  static int _activeLayouts = 0;
+
+  /// Whether some render object is in the middle of [performLayout].
+  ///
+  /// An element that builds at LAYOUT time (a [LayoutBuilder], a lazy
+  /// [ListView]) is updated either by an ordinary build, before layout,
+  /// or by an enclosing layout-time build, during it. Only the first
+  /// needs to mark its render object dirty: the second is already inside
+  /// the layout pass that will reach it, and marking there would leave
+  /// its ancestors dirty after the pass, scheduling another frame that
+  /// repeats the same update.
+  static bool get layoutInProgress => _activeLayouts > 0;
+
+  /// Whether THIS render object is inside its own [performLayout].
+  bool _doingThisLayout = false;
+
+  /// Mark this render object dirty from inside an enclosing layout pass.
+  ///
+  /// For an element updated by a layout-time build (see
+  /// [layoutInProgress]). It flags this node and its ancestors up to, but
+  /// not including, the one whose [performLayout] is running — that one
+  /// is about to lay out the subtree it just built, and the flags make
+  /// sure the walk down reaches this node even through ancestors whose
+  /// constraints are identical to last time. Nothing above the running
+  /// layout is touched, so no ancestor is left dirty after the pass and
+  /// no further frame is requested.
+  void markNeedsLayoutDuringLayout() {
+    RenderObject? node = this;
+    while (node != null && !node._doingThisLayout) {
+      node._needsLayout = true;
+      node._needsPaint = true;
+      node = node.parent;
+    }
+  }
+
   /// The parent of this render object in the render tree.
   RenderObject? parent;
 
@@ -386,6 +422,8 @@ abstract class RenderObject {
       // checks that we're in the middle of performLayout by verifying
       // _needsLayout is false).
       _needsLayout = false;
+      _activeLayouts++;
+      _doingThisLayout = true;
       try {
         performLayout();
         assert(_size != null, 'performLayout() did not set a size');
@@ -394,6 +432,9 @@ abstract class RenderObject {
         // Set a default size to prevent cascading failures
         _size = constraints.constrain(const Size(10, 5));
         _hasLayoutError = true;
+      } finally {
+        _activeLayouts--;
+        _doingThisLayout = false;
       }
     }
   }
@@ -592,6 +633,8 @@ abstract class RenderObject {
     // Set _needsLayout = false BEFORE calling performLayout so that
     // invokeLayoutCallback can be used during layout.
     _needsLayout = false;
+    _activeLayouts++;
+    _doingThisLayout = true;
     try {
       performLayout();
       markNeedsPaint();
@@ -602,6 +645,9 @@ abstract class RenderObject {
       if (_size == null && _constraints != null) {
         _size = _constraints!.constrain(const Size(20, 5));
       }
+    } finally {
+      _activeLayouts--;
+      _doingThisLayout = false;
     }
   }
 

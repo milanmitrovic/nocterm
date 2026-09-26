@@ -73,13 +73,23 @@ class LayoutBuilderElement extends RenderObjectElement {
   @override
   void update(Component newComponent) {
     super.update(newComponent);
-    // Mark that we need to rebuild with the new builder function.
-    // We DON'T call markNeedsLayout() here because:
-    // 1. If constraints change, layout will be triggered by the parent anyway
-    // 2. If only the builder changed, we'll use it next time layout runs
-    // 3. Calling markNeedsLayout unconditionally causes infinite frame loops
-    //    when the parent rebuilds frequently (e.g., due to ValueListenableBuilder)
+    // The new builder runs at the next layout of this render object — so
+    // that layout has to happen. The bindings reuse the root constraints
+    // while the terminal size is unchanged, so a frame no longer re-lays
+    // out the whole tree by default, and a builder change nothing else
+    // dirtied would be dropped. An update from an ordinary build marks
+    // as usual. An update from an enclosing layout-time build (a builder
+    // inside a builder) is inside the pass that is about to lay us out:
+    // it flags only the path below the running layout, because a full
+    // mark there would leave the root dirty after the pass and schedule a
+    // frame that repeats it (the loop an unconditional mark caused under
+    // a frequently-rebuilding parent such as a ValueListenableBuilder).
     _needsBuild = true;
+    if (RenderObject.layoutInProgress) {
+      renderObject.markNeedsLayoutDuringLayout();
+    } else {
+      renderObject.markNeedsLayout();
+    }
   }
 
   @override

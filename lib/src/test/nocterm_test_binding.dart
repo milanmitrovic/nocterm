@@ -134,6 +134,9 @@ class NoctermTestBinding extends NoctermBinding with SchedulerBinding {
     // Tests manually call pump() to render frames
   }
 
+  /// The root's tight constraints, the SAME object while the size holds.
+  BoxConstraints? _rootConstraints;
+
   /// The actual frame drawing logic, registered as a persistent callback.
   void _drawFrameCallback(Duration timeStamp) {
     if (rootElement == null) return;
@@ -163,10 +166,17 @@ class NoctermTestBinding extends NoctermBinding with SchedulerBinding {
         renderObject.attach(pipelineOwner);
       }
 
-      // Layout phase
-      renderObject.layout(BoxConstraints.tight(
-        Size(size.width.toDouble(), size.height.toDouble()),
-      ));
+      // Layout phase. The root constraints are REUSED while the size is
+      // unchanged, exactly as TerminalBinding does: layout skips a clean
+      // render object only when its constraints are identical, so a fresh
+      // object every frame re-laid out the whole tree on every pump.
+      final w = size.width.toDouble();
+      final h = size.height.toDouble();
+      var root = _rootConstraints;
+      if (root == null || root.maxWidth != w || root.maxHeight != h) {
+        root = _rootConstraints = BoxConstraints.tight(Size(w, h));
+      }
+      renderObject.layout(root);
 
       // Flush layout pipeline
       pipelineOwner.flushLayout();

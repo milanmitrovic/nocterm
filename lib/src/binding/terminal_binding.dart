@@ -1208,6 +1208,19 @@ class TerminalBinding extends NoctermBinding
     }
   }
 
+  BoxConstraints? _rootConstraints;
+
+  /// The root's tight constraints, the SAME object while the size holds.
+  BoxConstraints _rootConstraintsFor(double width, double height) {
+    final cached = _rootConstraints;
+    if (cached != null &&
+        cached.maxWidth == width &&
+        cached.maxHeight == height) {
+      return cached;
+    }
+    return _rootConstraints = BoxConstraints.tight(Size(width, height));
+  }
+
   /// The actual frame drawing logic, registered as a persistent callback.
   void _drawFrameCallback(Duration timeStamp) {
     if (rootElement == null) return;
@@ -1293,9 +1306,12 @@ class TerminalBinding extends NoctermBinding
         renderObject.attach(pipelineOwner);
       }
 
-      // Layout phase
-      renderObject.layout(BoxConstraints.tight(
-          Size(size.width.toDouble(), size.height.toDouble())));
+      // Layout phase. The root constraints are REUSED while the terminal
+      // size is unchanged: layout skips a clean render object only when
+      // its constraints are identical, so a fresh object every frame
+      // re-laid out the whole tree even when nothing was dirty.
+      renderObject.layout(_rootConstraintsFor(
+          size.width.toDouble(), size.height.toDouble()));
 
       // Flush layout pipeline
       pipelineOwner.flushLayout();
