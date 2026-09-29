@@ -233,6 +233,9 @@ class NoctermTestBinding extends NoctermBinding with SchedulerBinding {
       return; // Event was handled by debug system
     }
 
+    // The app's root-first claim, exactly as TerminalBinding asks it.
+    if (rootKeyClaim?.call(event) ?? false) return;
+
     // Try to dispatch the event to the root element
     _dispatchKeyToElement(rootElement!, event);
   }

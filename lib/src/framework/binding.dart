@@ -74,6 +74,24 @@ abstract class NoctermBinding {
     _instance = null;
   }
 
+  /// Offered every keyboard event BEFORE the element tree sees it.
+  ///
+  /// Keys are dispatched child-first: the deepest focused component is asked
+  /// first, and an ancestor only once no descendant took the key. A focused
+  /// [TextField] consumes anything carrying a `character` — modifiers
+  /// included — so without this an app-wide chord such as `alt+a` would be
+  /// typed into whichever field has focus and never reach the app.
+  ///
+  /// Return true to claim the event: it is then dispatched to no component
+  /// at all. Return false and dispatch proceeds exactly as if this were
+  /// unset. The framework's own debug chord (Ctrl+G) is still answered
+  /// first.
+  ///
+  /// There is one claim per binding. An app sets it while mounted and clears
+  /// it on dispose — only if it is still the one it set, so an app torn down
+  /// after its replacement mounted cannot unhook the replacement.
+  bool Function(KeyboardEvent event)? rootKeyClaim;
+
   BuildOwner? _buildOwner;
   BuildOwner get buildOwner => _buildOwner ??= createBuildOwner();
 

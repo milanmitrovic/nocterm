@@ -678,6 +678,10 @@ class TerminalBinding extends NoctermBinding
   bool _routeKeyboardEvent(KeyboardEvent event) {
     if (rootElement == null) return false;
 
+    // The app's root-first claim, before child-first dispatch can hand the
+    // key to a focused field. See [NoctermBinding.rootKeyClaim].
+    if (rootKeyClaim?.call(event) ?? false) return true;
+
     // Try to dispatch the event to the root element
     // The event will bubble through focused components
     return _dispatchKeyToElement(rootElement!, event);
