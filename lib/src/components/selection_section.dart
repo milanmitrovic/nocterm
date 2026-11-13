@@ -6,7 +6,20 @@ import 'package:nocterm/src/framework/terminal_canvas.dart';
 ///
 /// A null [end] runs the band to the widget's right edge.
 class SelectionBand {
-  const SelectionBand(this.start, [this.end]);
+  const SelectionBand(this.start, [this.end]) : group = null;
+
+  /// A band whose columns form a boundary of their own, shared with every
+  /// band and [SelectionSection] of the same [group] under the same scope
+  /// (scroll viewport, ungrouped section or area).
+  ///
+  /// For a panel that runs down beside rows of other boundaries — a
+  /// sidebar beside a page whose rows are split into titled sections, all
+  /// drawn as one line of text per row: the sidebar band of every row is
+  /// one boundary, whatever section the rest of its row belongs to. A drag
+  /// that starts in a grouped band selects that band's columns of every
+  /// row of its group, and nothing else; a drag that starts elsewhere on
+  /// the row never selects the grouped band's columns.
+  const SelectionBand.grouped(Object this.group, this.start, [this.end]);
 
   /// First column of the band (inclusive).
   final int start;
@@ -15,15 +28,23 @@ class SelectionBand {
   /// right edge.
   final int? end;
 
+  /// The boundary the band's columns belong to (see [SelectionBand.grouped]),
+  /// or null for the boundary of the row it is on.
+  final Object? group;
+
   @override
   bool operator ==(Object other) =>
-      other is SelectionBand && other.start == start && other.end == end;
+      other is SelectionBand &&
+      other.start == start &&
+      other.end == end &&
+      other.group == group;
 
   @override
-  int get hashCode => Object.hash(start, end);
+  int get hashCode => Object.hash(start, end, group);
 
   @override
-  String toString() => 'SelectionBand($start, ${end ?? 'end'})';
+  String toString() => 'SelectionBand($start, ${end ?? 'end'}'
+      '${group == null ? '' : ', group: $group'})';
 }
 
 /// A selection boundary inside a [SelectionArea].

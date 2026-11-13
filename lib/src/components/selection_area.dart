@@ -367,7 +367,7 @@ class RenderSelectionArea extends RenderMouseRegion {
     if (hit != null) {
       final localOffset = _globalToSelectableLocal(localPos, hit);
       final charIndex = hit.getCharacterIndexAtLocalPosition(localOffset);
-      final contextKey = _contextKeyForSelectable(hit);
+      final contextKey = _contextKeyAt(hit, localPos.dx);
       final id = _selectionIdForSelectable(hit);
       final entries = _contextLists[contextKey];
       final entry = entries == null ? null : _entryForId(entries, id);
@@ -411,7 +411,7 @@ class RenderSelectionArea extends RenderMouseRegion {
     if (_anchor == null) {
       final hit = _hitTestSelectables(localPos, section: _pressSection);
       if (hit != null) {
-        final contextKey = _contextKeyForSelectable(hit);
+        final contextKey = _contextKeyAt(hit, _pressPosition.dx);
         final id = _selectionIdForSelectable(hit);
         final localOffset = _globalToSelectableLocal(localPos, hit);
         final focusIndex = _focusIndexFromPress(hit, localPos, localOffset);
@@ -708,7 +708,8 @@ class RenderSelectionArea extends RenderMouseRegion {
   /// The global column bands `[left, right)` [selectable] is clipped by: its
   /// nearest [RenderSelectionColumns], or the [RenderSelectionSection] that
   /// bounds it when that one declares columns; null when it is in no band.
-  List<(double, double)>? _bandsForSelectable(Selectable selectable) {
+  /// Each comes with its [SelectionBand.group].
+  List<_GlobalBand>? _bandsForSelectable(Selectable selectable) {
     RenderObject? node = (selectable as RenderObject).parent;
     while (node != null && node != this) {
       if (node is RenderSelectionBands) {
@@ -719,15 +720,55 @@ class RenderSelectionArea extends RenderMouseRegion {
         return [
           for (final b in bands)
             (
-              origin + b.start,
-              origin +
-                  (b.end == null ? width : math.min(b.end!.toDouble(), width)),
+              columns: (
+                origin + b.start,
+                origin +
+                    (b.end == null
+                        ? width
+                        : math.min(b.end!.toDouble(), width)),
+              ),
+              group: b.group,
             ),
         ];
       }
       node = node.parent;
     }
     return null;
+  }
+
+  /// Index of the band of [bands] holding column [x], or of the nearest one
+  /// to a column in a gap between them.
+  static int _nearestBand(List<(double, double)> bands, double x) {
+    var best = 0;
+    var bestDistance = double.infinity;
+    for (var i = 0; i < bands.length; i++) {
+      final (left, right) = bands[i];
+      final distance = x < left
+          ? left - x
+          : x >= right
+              ? x - right + 1
+              : 0.0;
+      if (distance < bestDistance) {
+        best = i;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+
+  /// The group a drag pressed at column [x] on [selectable] selects in:
+  /// that of the band [x] falls in (or nearest) when the band is grouped
+  /// ([SelectionBand.grouped]), else [selectable]'s own.
+  Object _contextKeyAt(Selectable selectable, double x) {
+    final bands = _bandsForSelectable(selectable);
+    if (bands != null && bands.isNotEmpty) {
+      final band = bands[_nearestBand([for (final b in bands) b.columns], x)];
+      final group = band.group;
+      if (group != null) {
+        return _SectionGroupKey(_scopeAbove(selectable as RenderObject), group);
+      }
+    }
+    return _contextKeyForSelectable(selectable);
   }
 
   int? _listIndexForSelectable(Selectable selectable) {
@@ -773,19 +814,45 @@ class RenderSelectionArea extends RenderMouseRegion {
       }
       final clip = _clipBoundsForSelectable(selectable, baseBounds);
       final contextKey = _contextKeyForSelectable(selectable);
-      final entry = _SelectableEntry(
-        selectable: selectable,
-        id: _selectionIdForSelectable(selectable),
-        contextKey: contextKey,
-        bounds: bounds,
-        listIndex: _listIndexForSelectable(selectable),
-        bands: _bandsForSelectable(selectable),
-        visibleColumns: clip != null &&
-                (clip.left > bounds.left || clip.right < bounds.right)
-            ? (clip.left, clip.right)
-            : null,
-      );
-      lists.putIfAbsent(contextKey, () => []).add(entry);
+      final id = _selectionIdForSelectable(selectable);
+      final listIndex = _listIndexForSelectable(selectable);
+      final visibleColumns =
+          clip != null && (clip.left > bounds.left || clip.right < bounds.right)
+              ? (clip.left, clip.right)
+              : null;
+      final bands = _bandsForSelectable(selectable);
+      // The row's own boundary sees only its ungrouped bands; each grouped
+      // band puts its columns of the row in its group's boundary instead,
+      // as the one band of an entry of their own.
+      final ownBands = bands == null
+          ? null
+          : [
+              for (final b in bands)
+                if (b.group == null) b.columns,
+            ];
+      lists.putIfAbsent(contextKey, () => []).add(_SelectableEntry(
+            selectable: selectable,
+            id: id,
+            contextKey: contextKey,
+            bounds: bounds,
+            listIndex: listIndex,
+            bands: ownBands,
+            visibleColumns: visibleColumns,
+          ));
+      for (final band in bands ?? const <_GlobalBand>[]) {
+        final group = band.group;
+        if (group == null) continue;
+        final key = _SectionGroupKey(_scopeAbove(ro), group);
+        lists.putIfAbsent(key, () => []).add(_SelectableEntry(
+              selectable: selectable,
+              id: id,
+              contextKey: key,
+              bounds: bounds,
+              listIndex: listIndex,
+              bands: [band.columns],
+              visibleColumns: visibleColumns,
+            ));
+      }
     }
 
     for (final list in lists.values) {
@@ -1104,21 +1171,7 @@ class RenderSelectionArea extends RenderMouseRegion {
       _pressBandColumns = null;
       return;
     }
-    final x = _pressPosition.dx;
-    var best = 0;
-    var bestDistance = double.infinity;
-    for (var i = 0; i < bands.length; i++) {
-      final (left, right) = bands[i];
-      final distance = x < left
-          ? left - x
-          : x >= right
-              ? x - right + 1
-              : 0.0;
-      if (distance < bestDistance) {
-        best = i;
-        bestDistance = distance;
-      }
-    }
+    final best = _nearestBand(bands, _pressPosition.dx);
     _pressBand = best;
     _pressBandColumns = bands[best];
   }
@@ -1441,6 +1494,9 @@ class _SectionGroupKey {
   @override
   int get hashCode => Object.hash(identityHashCode(scope), group);
 }
+
+/// A band in global columns, with its [SelectionBand.group].
+typedef _GlobalBand = ({(double, double) columns, Object? group});
 
 class _SelectionPosition {
   _SelectionPosition({

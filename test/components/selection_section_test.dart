@@ -619,4 +619,71 @@ void main() {
       });
     });
   });
+
+  group('SelectionBand.grouped', () {
+    /// A page of two titled sections — its rows grouped `a`, then `b` —
+    /// with a sidebar down the right of every row, all one line per row.
+    Component page({bool groupedSidebar = true}) => ListView(
+          children: [
+            for (var i = 0; i < 4; i++)
+              SelectionSection(
+                group: i < 2 ? 'a' : 'b',
+                child: SelectionColumns(
+                  columns: [
+                    const SelectionBand(0, 5),
+                    groupedSidebar
+                        ? const SelectionBand.grouped('side', 8)
+                        : const SelectionBand(8),
+                  ],
+                  child: RichText(
+                    text: TextSpan(text: 'text$i  │side$i'),
+                    softWrap: false,
+                  ),
+                ),
+              ),
+          ],
+        );
+
+    test('a drag in a grouped band runs down every section beside it',
+        () async {
+      await testNocterm('grouped band', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: page(),
+        ));
+
+        await _drag(tester, (8, 0), (13, 3));
+        expect(completed, 'side0\nside1\nside2\nside3');
+      });
+    });
+
+    test('a drag in the row text stays in its section and band', () async {
+      await testNocterm('row band', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: page(),
+        ));
+
+        await _drag(tester, (0, 0), (13, 3));
+        expect(completed, 'text0\ntext1');
+      });
+    });
+
+    test('an ungrouped sidebar band stops at the section boundary',
+        () async {
+      await testNocterm('ungrouped band', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: page(groupedSidebar: false),
+        ));
+
+        await _drag(tester, (8, 0), (13, 3));
+        expect(completed, 'side0\nside1');
+      });
+    });
+  });
+
 }
