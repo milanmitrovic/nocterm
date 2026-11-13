@@ -214,6 +214,14 @@ class RenderSelectionArea extends RenderMouseRegion {
   List<Selectable>? _selectablesCache;
   Map<Object, List<_SelectableEntry>>? _contextListsCache;
 
+  /// Paint order of every [Selectable] and [RenderSelectionSection] found
+  /// by the last [_collectSelectables] walk: the walk visits children in
+  /// the order they paint, so a higher number paints on top.
+  Map<RenderObject, int> _paintOrder = {};
+
+  /// Every [RenderSelectionSection] found by the last walk, in paint order.
+  List<RenderSelectionSection> _sections = [];
+
   /// The position where the pointer was initially pressed.
   Offset _pressPosition = Offset.zero;
 
@@ -355,7 +363,7 @@ class RenderSelectionArea extends RenderMouseRegion {
     final hit = _hitTestSelectables(localPos);
     _pressSection = hit != null
         ? _sectionKeyAbove(hit as RenderObject)
-        : _sectionKeyOf(_innermostSectionAt(localPos));
+        : _sectionKeyOf(_topmostSectionAt(localPos));
     if (hit != null) {
       final localOffset = _globalToSelectableLocal(localPos, hit);
       final charIndex = hit.getCharacterIndexAtLocalPosition(localOffset);
@@ -586,14 +594,22 @@ class RenderSelectionArea extends RenderMouseRegion {
     }
 
     final result = <Selectable>[];
+    final paintOrder = <RenderObject, int>{};
+    final sections = <RenderSelectionSection>[];
     void visit(RenderObject node) {
       if (node is Selectable) {
+        paintOrder[node] = paintOrder.length;
         result.add(node);
+      } else if (node is RenderSelectionSection) {
+        paintOrder[node] = paintOrder.length;
+        sections.add(node);
       }
       node.visitChildren(visit);
     }
 
     root.visitChildren(visit);
+    _paintOrder = paintOrder;
+    _sections = sections;
 
     // Sort by global paint position (y first, then x)
     result.sort((a, b) {
@@ -673,21 +689,21 @@ class RenderSelectionArea extends RenderMouseRegion {
     return null;
   }
 
-  /// The innermost [RenderSelectionSection] whose bounds hold [globalPos].
-  RenderSelectionSection? _innermostSectionAt(Offset globalPos) {
-    RenderSelectionSection? found;
-    void visit(RenderObject node) {
-      if (node is RenderSelectionSection && node.hasSize) {
-        final o = _globalPaintOffsetOf(node);
-        final r = Rect.fromLTWH(o.dx, o.dy, node.size.width, node.size.height);
-        if (r.contains(globalPos)) found = node;
-      }
-      node.visitChildren(visit);
+  /// The topmost [RenderSelectionSection] whose visible bounds hold
+  /// [globalPos]: the last one painted there, which for nested sections is
+  /// the innermost.
+  RenderSelectionSection? _topmostSectionAt(Offset globalPos) {
+    final baseBounds = _selectionAreaBounds();
+    for (final section in _sections.reversed) {
+      if (!section.hasSize) continue;
+      final visible = _visibleBoundsOf(section, baseBounds);
+      if (visible != null && _holds(visible, globalPos)) return section;
     }
-
-    visitChildren(visit);
-    return found;
+    return null;
   }
+
+  static bool _holds(Rect r, Offset p) =>
+      p.dx >= r.left && p.dx < r.right && p.dy >= r.top && p.dy < r.bottom;
 
   /// The global column bands `[left, right)` [selectable] is clipped by: its
   /// nearest [RenderSelectionColumns], or the [RenderSelectionSection] that
@@ -802,38 +818,44 @@ class RenderSelectionArea extends RenderMouseRegion {
   }
 
   // Hit testing selectables
-  /// Returns the [Selectable] whose bounds contain [globalPos], or null.
+  /// Returns the topmost [Selectable] painted at [globalPos], or null —
+  /// also null when a [SelectionSection] painted over it holds [globalPos]
+  /// (a press on an overlay's blank ground never reaches the text beneath).
   /// With a [section] boundary (see [_sectionKeyOf]), only one inside it.
   Selectable? _hitTestSelectables(
     Offset globalPos, {
     Object? section,
   }) {
     final baseBounds = _selectionAreaBounds();
+    Selectable? top;
+    var topOrder = -1;
     for (final s in _cachedSelectables) {
+      final order = _paintOrder[s as RenderObject] ?? -1;
+      if (order <= topOrder) continue;
       if (section != null && _sectionKeyAbove(s as RenderObject) != section) {
         continue;
       }
-      final origin = s.globalPaintOffset;
-      final ro = s as RenderObject;
-      if (!ro.hasSize) continue;
-      final sBounds = Rect.fromLTWH(
-        origin.dx,
-        origin.dy,
-        ro.size.width,
-        ro.size.height,
-      );
-      final clipBounds = _clipBoundsForSelectable(s, baseBounds);
-      if (clipBounds == null) continue;
-      final visibleBounds = _intersectRect(sBounds, clipBounds);
-      if (visibleBounds == null) continue;
-      if (globalPos.dx >= visibleBounds.left &&
-          globalPos.dx < visibleBounds.right &&
-          globalPos.dy >= visibleBounds.top &&
-          globalPos.dy < visibleBounds.bottom) {
-        return s;
-      }
+      final visibleBounds = _visibleBoundsOf(s as RenderObject, baseBounds);
+      if (visibleBounds == null || !_holds(visibleBounds, globalPos)) continue;
+      top = s;
+      topOrder = order;
     }
-    return null;
+    if (top == null) return null;
+    final cover = _topmostSectionAt(globalPos);
+    // A section around [top] is visited — so ordered — before it; one
+    // ordered after it is painted over it.
+    if (cover != null && (_paintOrder[cover] ?? -1) > topOrder) return null;
+    return top;
+  }
+
+  /// The part of [ro]'s bounds that its clips leave visible, or null.
+  Rect? _visibleBoundsOf(RenderObject ro, Rect baseBounds) {
+    if (!ro.hasSize) return null;
+    final origin = _globalPaintOffsetOf(ro);
+    final bounds =
+        Rect.fromLTWH(origin.dx, origin.dy, ro.size.width, ro.size.height);
+    final clip = _clipBoundsForNode(ro, baseBounds);
+    return clip == null ? null : _intersectRect(bounds, clip);
   }
 
   /// Returns the nearest [Selectable] to [globalPos] when the pointer is
@@ -1344,11 +1366,22 @@ class RenderSelectionArea extends RenderMouseRegion {
     Selectable selectable,
     Rect baseBounds, {
     bool viewports = true,
+  }) =>
+      _clipBoundsForNode(
+        selectable as RenderObject,
+        baseBounds,
+        viewports: viewports,
+      );
+
+  /// [_clipBoundsForSelectable] for any render object.
+  Rect? _clipBoundsForNode(
+    RenderObject ro,
+    Rect baseBounds, {
+    bool viewports = true,
   }) {
-    final ro = selectable as RenderObject;
     Rect? clip = baseBounds;
     if (!viewports) {
-      final origin = selectable.globalPaintOffset;
+      final origin = _globalPaintOffsetOf(ro);
       clip = Rect.fromLTWH(
         origin.dx,
         origin.dy,

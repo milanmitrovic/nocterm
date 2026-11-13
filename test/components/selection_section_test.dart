@@ -547,4 +547,76 @@ void main() {
       });
     });
   });
+
+  group('a press picks the selectable painted on top', () {
+    /// Rows of text under an overlay section that covers columns 2–13 of
+    /// rows 1–2 and shows `over` at its top left.
+    Component overlaid() => Stack(
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < 4; i++) Text('under row $i under row'),
+              ],
+            ),
+            Positioned(
+              top: 1,
+              left: 2,
+              child: SelectionSection(
+                child: Container(
+                  width: 12,
+                  height: 2,
+                  color: Colors.black,
+                  child: const Align(
+                    alignment: Alignment.topLeft,
+                    child: Text('over'),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+
+    test('a press on overlay text anchors in the overlay, not beneath it',
+        () async {
+      await testNocterm('topmost text', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: overlaid(),
+        ));
+
+        await _drag(tester, (2, 1), (6, 1));
+        expect(completed, 'over');
+      });
+    });
+
+    test("a press on an overlay's blank ground selects nothing beneath it",
+        () async {
+      await testNocterm('topmost ground', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: overlaid(),
+        ));
+
+        await _drag(tester, (9, 2), (13, 2));
+        expect(completed, '');
+      });
+    });
+
+    test('a press beside the overlay still selects the rows beneath',
+        () async {
+      await testNocterm('beside overlay', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: overlaid(),
+        ));
+
+        await _drag(tester, (0, 3), (5, 3));
+        expect(completed, 'under');
+      });
+    });
+  });
 }
