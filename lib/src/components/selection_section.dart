@@ -45,10 +45,19 @@ class SelectionBand {
 ///
 /// When only some rows of a section are split, leave [columns] null and
 /// wrap those rows in [SelectionColumns] instead.
+///
+/// A section is one render object, so it can only bound a subtree. Inside a
+/// [ListView], where a visual section is many separately built rows, give
+/// each row of the section a [SelectionSection] with the same [group]
+/// instead: all sections that share a [group] (by `==`) under the same
+/// scroll viewport (or the same enclosing section) form ONE boundary. A
+/// drag that starts in a row of one group then never reaches the rows of
+/// another, even though they scroll in one viewport.
 class SelectionSection extends SingleChildRenderObjectComponent {
   const SelectionSection({
     super.key,
     this.columns,
+    this.group,
     required Component child,
   }) : super(child: child);
 
@@ -56,16 +65,23 @@ class SelectionSection extends SingleChildRenderObjectComponent {
   /// the whole section.
   final List<SelectionBand>? columns;
 
+  /// The boundary this section is part of, or null for a boundary of its
+  /// own. Sections with equal groups under one scroll viewport (or one
+  /// enclosing section) are one boundary.
+  final Object? group;
+
   @override
   RenderSelectionSection createRenderObject(BuildContext context) =>
-      RenderSelectionSection(columns: columns);
+      RenderSelectionSection(columns: columns, group: group);
 
   @override
   void updateRenderObject(
     BuildContext context,
     covariant RenderSelectionSection renderObject,
   ) {
-    renderObject.columns = columns;
+    renderObject
+      ..columns = columns
+      ..group = group;
   }
 }
 
@@ -169,7 +185,19 @@ abstract class RenderSelectionBands extends RenderObject
 
 /// Render object of [SelectionSection].
 class RenderSelectionSection extends RenderSelectionBands {
-  RenderSelectionSection({super.columns});
+  RenderSelectionSection({super.columns, Object? group}) : _group = group;
+
+  Object? _group;
+
+  /// See [SelectionSection.group].
+  Object? get group => _group;
+  set group(Object? value) {
+    if (_group == value) return;
+    _group = value;
+    // Like the bands, a group changes no pixels; the layout mark drops the
+    // SelectionArea's cached grouping.
+    markNeedsLayout();
+  }
 }
 
 /// Render object of [SelectionColumns].

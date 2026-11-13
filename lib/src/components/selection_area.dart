@@ -222,11 +222,11 @@ class RenderSelectionArea extends RenderMouseRegion {
   /// Focus (current drag position) selectable and char index.
   _SelectionPosition? _focus;
 
-  /// The [RenderSelectionSection] the press landed in (the nearest one
-  /// around the pressed selectable, else the innermost one under the press
-  /// cell); null when the press is in no section. A late anchor is only
-  /// taken from this section.
-  RenderSelectionSection? _pressSection;
+  /// The section boundary the press landed in (that of the nearest
+  /// [RenderSelectionSection] around the pressed selectable, else of the
+  /// innermost one under the press cell — see [_sectionKeyOf]); null when
+  /// the press is in no section. A late anchor is only taken from it.
+  Object? _pressSection;
 
   /// Index of the band the drag is clipped to — the band of the anchor's
   /// [SelectionSection] / [SelectionColumns] that holds the press cell —
@@ -353,8 +353,8 @@ class RenderSelectionArea extends RenderMouseRegion {
     // Hit-test to find which selectable contains the pointer
     final hit = _hitTestSelectables(localPos);
     _pressSection = hit != null
-        ? _nearestSectionAncestor(hit as RenderObject)
-        : _innermostSectionAt(localPos);
+        ? _sectionKeyAbove(hit as RenderObject)
+        : _sectionKeyOf(_innermostSectionAt(localPos));
     if (hit != null) {
       final localOffset = _globalToSelectableLocal(localPos, hit);
       final charIndex = hit.getCharacterIndexAtLocalPosition(localOffset);
@@ -508,7 +508,9 @@ class RenderSelectionArea extends RenderMouseRegion {
     _SelectionPosition anchor,
     _SelectionPosition focus,
   ) {
-    if (contextKey is! RenderListViewport) return;
+    final scope =
+        contextKey is _SectionGroupKey ? contextKey.scope : contextKey;
+    if (scope is! RenderListViewport) return;
     final anchorEntry = _entryForId(entries, anchor.selectableId);
     final focusEntry = _entryForId(entries, focus.selectableId);
     final anchorIndex = anchorEntry?.listIndex;
@@ -516,7 +518,7 @@ class RenderSelectionArea extends RenderMouseRegion {
     if (anchorIndex == null || focusIndex == null) return;
     final minIndex = math.min(anchorIndex, focusIndex);
     final maxIndex = math.max(anchorIndex, focusIndex);
-    onRangeUpdated?.call(contextKey, minIndex, maxIndex);
+    onRangeUpdated?.call(scope, minIndex, maxIndex);
   }
 
   void _handlePointerUp(MouseEvent event) {
@@ -611,13 +613,36 @@ class RenderSelectionArea extends RenderMouseRegion {
     return ro.selectionId ?? ro;
   }
 
-  /// The group [selectable] is selected in: its nearest
+  /// The group [selectable] is selected in: its nearest ungrouped
   /// [RenderSelectionSection] or scroll viewport ancestor (the nearest one
-  /// wins), else this area. A drag never leaves the group it started in.
+  /// wins), else this area — narrowed to the [SelectionSection.group] of
+  /// the nearest grouped section below that scope, when there is one. A
+  /// drag never leaves the group it started in.
   Object _contextKeyForSelectable(Selectable selectable) {
+    Object? group;
     RenderObject? node = (selectable as RenderObject).parent;
     while (node != null && node != this) {
-      if (node is RenderSelectionSection ||
+      if (node is RenderSelectionSection && node.group != null) {
+        group ??= node.group;
+      } else if (node is RenderSelectionSection ||
+          node is RenderListViewport ||
+          node is RenderSingleChildViewport) {
+        return _grouped(node, group);
+      }
+      node = node.parent;
+    }
+    return _grouped(this, group);
+  }
+
+  static Object _grouped(Object scope, Object? group) =>
+      group == null ? scope : _SectionGroupKey(scope, group);
+
+  /// The scope a grouped section's group lives in: its nearest ungrouped
+  /// [RenderSelectionSection] or scroll viewport ancestor, else this area.
+  Object _scopeAbove(RenderObject ro) {
+    RenderObject? node = ro.parent;
+    while (node != null && node != this) {
+      if ((node is RenderSelectionSection && node.group == null) ||
           node is RenderListViewport ||
           node is RenderSingleChildViewport) {
         return node;
@@ -627,11 +652,21 @@ class RenderSelectionArea extends RenderMouseRegion {
     return this;
   }
 
-  /// The nearest [RenderSelectionSection] above [ro] inside this area.
-  RenderSelectionSection? _nearestSectionAncestor(RenderObject ro) {
+  /// The boundary [section] stands for: itself, or for a grouped section
+  /// its group within its scope — so every row of one group compares equal.
+  Object? _sectionKeyOf(RenderSelectionSection? section) {
+    if (section == null) return null;
+    final group = section.group;
+    if (group == null) return section;
+    return _SectionGroupKey(_scopeAbove(section), group);
+  }
+
+  /// The boundary of the nearest [RenderSelectionSection] above [ro] inside
+  /// this area, or null.
+  Object? _sectionKeyAbove(RenderObject ro) {
     RenderObject? node = ro.parent;
     while (node != null && node != this) {
-      if (node is RenderSelectionSection) return node;
+      if (node is RenderSelectionSection) return _sectionKeyOf(node);
       node = node.parent;
     }
     return null;
@@ -753,14 +788,14 @@ class RenderSelectionArea extends RenderMouseRegion {
 
   // Hit testing selectables
   /// Returns the [Selectable] whose bounds contain [globalPos], or null.
+  /// With a [section] boundary (see [_sectionKeyOf]), only one inside it.
   Selectable? _hitTestSelectables(
     Offset globalPos, {
-    RenderSelectionSection? section,
+    Object? section,
   }) {
     final baseBounds = _selectionAreaBounds();
     for (final s in _cachedSelectables) {
-      if (section != null &&
-          _nearestSectionAncestor(s as RenderObject) != section) {
+      if (section != null && _sectionKeyAbove(s as RenderObject) != section) {
         continue;
       }
       final origin = s.globalPaintOffset;
@@ -1286,6 +1321,26 @@ class RenderSelectionArea extends RenderMouseRegion {
 
   @override
   bool hitTestSelf(Offset position) => true;
+}
+
+/// The boundary formed by every [RenderSelectionSection] whose
+/// [RenderSelectionSection.group] equals [group] under [scope] — a scroll
+/// viewport, an ungrouped section or the [RenderSelectionArea].
+@immutable
+class _SectionGroupKey {
+  const _SectionGroupKey(this.scope, this.group);
+
+  final Object scope;
+  final Object group;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _SectionGroupKey &&
+      identical(other.scope, scope) &&
+      other.group == group;
+
+  @override
+  int get hashCode => Object.hash(identityHashCode(scope), group);
 }
 
 class _SelectionPosition {

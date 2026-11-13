@@ -318,4 +318,127 @@ void main() {
       });
     });
   });
+
+  group('SelectionSection group', () {
+    /// Two titled sections stacked in ONE list, each row its own item.
+    Component listOfGroups({bool grouped = true}) {
+      const rows = [
+        ('notes', '── Notes ──'),
+        ('notes', 'note one'),
+        ('notes', 'note two'),
+        ('agenda', '── Agenda ──'),
+        ('agenda', 'agenda one'),
+        ('agenda', 'agenda two'),
+      ];
+      return ListView.builder(
+        itemCount: rows.length,
+        itemBuilder: (context, i) {
+          final (group, text) = rows[i];
+          final row = Text(text);
+          return grouped ? SelectionSection(group: group, child: row) : row;
+        },
+      );
+    }
+
+    test('a drag in one group of a list never reaches the next', () async {
+      await testNocterm('list group down', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: listOfGroups(),
+        ));
+
+        await _drag(tester, (5, 1), (6, 5));
+        expect(completed, 'one\nnote two');
+      });
+    });
+
+    test('a drag up from the second group stays in it', () async {
+      await testNocterm('list group up', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: listOfGroups(),
+        ));
+
+        await _drag(tester, (6, 5), (0, 0));
+        expect(completed, '── Agenda ──\nagenda one\nagenda');
+      });
+    });
+
+    test('without groups the same drag runs through the whole list',
+        () async {
+      await testNocterm('list ungrouped', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: listOfGroups(grouped: false),
+        ));
+
+        await _drag(tester, (5, 1), (6, 5));
+        expect(completed, contains('Agenda'));
+      });
+    });
+
+    test('groups bound a drag outside any viewport too', () async {
+      await testNocterm('column group', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              SelectionSection(group: 1, child: Text('first a')),
+              SelectionSection(group: 1, child: Text('first b')),
+              SelectionSection(group: 2, child: Text('second a')),
+            ],
+          ),
+        ));
+
+        await _drag(tester, (0, 0), (5, 2));
+        expect(completed, 'first a\nfirst b');
+      });
+    });
+
+    test('a press on blank space of a grouped row anchors in its group',
+        () async {
+      await testNocterm('group late anchor', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              SelectionSection(group: 'a', child: Text('top')),
+              SelectionSection(
+                group: 'a',
+                child: SizedBox(width: 30, height: 1),
+              ),
+              SelectionSection(group: 'b', child: Text('other group')),
+            ],
+          ),
+        ));
+
+        // Press on the blank row of group a, drag down into group b, then
+        // back up to the first row: only group a can take the anchor.
+        await tester.press(10, 1);
+        await tester.sendMouseEvent(const MouseEvent(
+          button: MouseButton.left,
+          x: 5,
+          y: 2,
+          pressed: true,
+          isMotion: true,
+        ));
+        await tester.sendMouseEvent(const MouseEvent(
+          button: MouseButton.left,
+          x: 1,
+          y: 0,
+          pressed: true,
+          isMotion: true,
+        ));
+        await tester.release(1, 0);
+        expect(completed, 'op');
+      });
+    });
+  });
 }
