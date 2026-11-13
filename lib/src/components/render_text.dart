@@ -90,6 +90,18 @@ class RenderText extends RenderObject with Selectable {
   TextLayoutResult? get selectableLayout => _layoutResult;
 
   @override
+  int selectionLineXOffset(int lineIndex) {
+    final lines = _layoutResult?.lines;
+    if (lines == null || !hasSize) return 0;
+    if (lineIndex < 0 || lineIndex >= lines.length) return 0;
+    return TextLayoutEngine.calculateAlignmentOffset(
+      lines[lineIndex],
+      size.width.toInt(),
+      _textAlign,
+    ).toInt();
+  }
+
+  @override
   bool hitTestSelf(Offset position) => true;
 
   @override

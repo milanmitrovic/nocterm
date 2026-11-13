@@ -67,6 +67,33 @@ int getCharacterIndexAtLocalPosition({
   return (lineStartOffset + charIndex).clamp(0, text.length);
 }
 
+/// The `[start, end)` character offsets within [line] of the graphemes that
+/// sit entirely inside columns `[left, right)` (null bounds are open).
+///
+/// Columns are display columns from the line's first cell, so a wide
+/// grapheme counts two. One straddling either bound is left out. Returns
+/// `(0, 0)` when no grapheme fits.
+(int, int) charRangeForColumns(String line, int? left, int? right) {
+  int col = 0;
+  int index = 0;
+  int? first;
+  int last = 0;
+  for (final grapheme in line.characters) {
+    final gw = UnicodeWidth.graphemeWidth(grapheme);
+    final inside =
+        (left == null || col >= left) && (right == null || col + gw <= right);
+    if (inside) {
+      first ??= index;
+      last = index + grapheme.length;
+    } else if (first != null) {
+      break;
+    }
+    col += gw;
+    index += grapheme.length;
+  }
+  return first == null ? (0, 0) : (first, last);
+}
+
 /// Paints a single line of text with optional selection highlighting.
 ///
 /// [lineOffsets] — authoritative per-line source offsets from the layout

@@ -222,6 +222,21 @@ class RenderSelectionArea extends RenderMouseRegion {
   /// Focus (current drag position) selectable and char index.
   _SelectionPosition? _focus;
 
+  /// The [RenderSelectionSection] the press landed in (the nearest one
+  /// around the pressed selectable, else the innermost one under the press
+  /// cell); null when the press is in no section. A late anchor is only
+  /// taken from this section.
+  RenderSelectionSection? _pressSection;
+
+  /// Index of the band the drag is clipped to — the band of the anchor's
+  /// [SelectionSection] / [SelectionColumns] that holds the press cell —
+  /// or null when the anchor sits in no band.
+  int? _pressBand;
+
+  /// Global columns `[left, right)` of [_pressBand] on the anchor's row;
+  /// the pointer's column is held inside it for the rest of the drag.
+  (double, double)? _pressBandColumns;
+
   // Cache invalidation
 
   void _invalidateSelectablesCache() {
@@ -332,9 +347,14 @@ class RenderSelectionArea extends RenderMouseRegion {
     for (final s in _cachedSelectables) {
       s.clearSelection();
     }
+    _pressBand = null;
+    _pressBandColumns = null;
 
     // Hit-test to find which selectable contains the pointer
     final hit = _hitTestSelectables(localPos);
+    _pressSection = hit != null
+        ? _nearestSectionAncestor(hit as RenderObject)
+        : _innermostSectionAt(localPos);
     if (hit != null) {
       final localOffset = _globalToSelectableLocal(localPos, hit);
       final charIndex = hit.getCharacterIndexAtLocalPosition(localOffset);
@@ -355,6 +375,7 @@ class RenderSelectionArea extends RenderMouseRegion {
         offset: charIndex,
         orderIndex: entry == null ? null : entries!.indexOf(entry),
       );
+      _setPressBand(entry);
       if (entries != null) {
         _updateSelectionRangeForViewport(
             entries, contextKey, _anchor!, _focus!);
@@ -379,7 +400,7 @@ class RenderSelectionArea extends RenderMouseRegion {
 
     // Late anchor: first selectable the pointer touches becomes the anchor.
     if (_anchor == null) {
-      final hit = _hitTestSelectables(localPos);
+      final hit = _hitTestSelectables(localPos, section: _pressSection);
       if (hit != null) {
         final contextKey = _contextKeyForSelectable(hit);
         final id = _selectionIdForSelectable(hit);
@@ -400,6 +421,7 @@ class RenderSelectionArea extends RenderMouseRegion {
           offset: focusIndex,
           orderIndex: entry == null ? null : entries!.indexOf(entry),
         );
+        _setPressBand(entry);
       }
       _notifySelectionChanged();
       return;
@@ -448,17 +470,23 @@ class RenderSelectionArea extends RenderMouseRegion {
       _anchor!.orderIndex = entries.indexOf(anchorEntry);
     }
 
-    final hit = _hitTestSelectablesInContext(localPos, entries);
+    // Inside a band, the pointer's column is held in the band and only the
+    // rows that take part in it can take the focus.
+    final pointer = _clampToPressBand(localPos);
+    final candidates = _pressBandColumns == null
+        ? entries
+        : entries.where(_isFocusCandidate).toList();
+    final hit = _hitTestSelectablesInContext(pointer, candidates);
     final focusSelectable =
-        hit ?? _nearestSelectableInContext(localPos, entries);
+        hit ?? _nearestSelectableInContext(pointer, candidates);
     if (focusSelectable != null) {
-      final localOffset = _globalToSelectableLocal(localPos, focusSelectable);
+      final localOffset = _globalToSelectableLocal(pointer, focusSelectable);
       final focusId = _selectionIdForSelectable(focusSelectable);
       final focusEntry = _entryForId(entries, focusId);
       _focus = _SelectionPosition(
         context: contextKey,
         selectableId: focusId,
-        offset: _focusIndexFromPress(focusSelectable, localPos, localOffset),
+        offset: _focusIndexFromPress(focusSelectable, pointer, localOffset),
         orderIndex: focusEntry == null ? null : entries.indexOf(focusEntry),
       );
 
@@ -583,9 +611,71 @@ class RenderSelectionArea extends RenderMouseRegion {
     return ro.selectionId ?? ro;
   }
 
+  /// The group [selectable] is selected in: its nearest
+  /// [RenderSelectionSection] or scroll viewport ancestor (the nearest one
+  /// wins), else this area. A drag never leaves the group it started in.
   Object _contextKeyForSelectable(Selectable selectable) {
-    final ro = selectable as RenderObject;
-    return _nearestScrollViewportAncestor(ro) ?? this;
+    RenderObject? node = (selectable as RenderObject).parent;
+    while (node != null && node != this) {
+      if (node is RenderSelectionSection ||
+          node is RenderListViewport ||
+          node is RenderSingleChildViewport) {
+        return node;
+      }
+      node = node.parent;
+    }
+    return this;
+  }
+
+  /// The nearest [RenderSelectionSection] above [ro] inside this area.
+  RenderSelectionSection? _nearestSectionAncestor(RenderObject ro) {
+    RenderObject? node = ro.parent;
+    while (node != null && node != this) {
+      if (node is RenderSelectionSection) return node;
+      node = node.parent;
+    }
+    return null;
+  }
+
+  /// The innermost [RenderSelectionSection] whose bounds hold [globalPos].
+  RenderSelectionSection? _innermostSectionAt(Offset globalPos) {
+    RenderSelectionSection? found;
+    void visit(RenderObject node) {
+      if (node is RenderSelectionSection && node.hasSize) {
+        final o = _globalPaintOffsetOf(node);
+        final r = Rect.fromLTWH(o.dx, o.dy, node.size.width, node.size.height);
+        if (r.contains(globalPos)) found = node;
+      }
+      node.visitChildren(visit);
+    }
+
+    visitChildren(visit);
+    return found;
+  }
+
+  /// The global column bands `[left, right)` [selectable] is clipped by: its
+  /// nearest [RenderSelectionColumns], or the [RenderSelectionSection] that
+  /// bounds it when that one declares columns; null when it is in no band.
+  List<(double, double)>? _bandsForSelectable(Selectable selectable) {
+    RenderObject? node = (selectable as RenderObject).parent;
+    while (node != null && node != this) {
+      if (node is RenderSelectionBands) {
+        final bands = node.columns;
+        if (bands == null) return null;
+        final origin = _globalPaintOffsetOf(node).dx;
+        final width = node.hasSize ? node.size.width : double.infinity;
+        return [
+          for (final b in bands)
+            (
+              origin + b.start,
+              origin +
+                  (b.end == null ? width : math.min(b.end!.toDouble(), width)),
+            ),
+        ];
+      }
+      node = node.parent;
+    }
+    return null;
   }
 
   int? _listIndexForSelectable(Selectable selectable) {
@@ -627,6 +717,7 @@ class RenderSelectionArea extends RenderMouseRegion {
         contextKey: contextKey,
         bounds: bounds,
         listIndex: _listIndexForSelectable(selectable),
+        bands: _bandsForSelectable(selectable),
       );
       lists.putIfAbsent(contextKey, () => []).add(entry);
     }
@@ -662,9 +753,16 @@ class RenderSelectionArea extends RenderMouseRegion {
 
   // Hit testing selectables
   /// Returns the [Selectable] whose bounds contain [globalPos], or null.
-  Selectable? _hitTestSelectables(Offset globalPos) {
+  Selectable? _hitTestSelectables(
+    Offset globalPos, {
+    RenderSelectionSection? section,
+  }) {
     final baseBounds = _selectionAreaBounds();
     for (final s in _cachedSelectables) {
+      if (section != null &&
+          _nearestSectionAncestor(s as RenderObject) != section) {
+        continue;
+      }
       final origin = s.globalPaintOffset;
       final ro = s as RenderObject;
       if (!ro.hasSize) continue;
@@ -871,7 +969,88 @@ class RenderSelectionArea extends RenderMouseRegion {
         // Widgets between anchor and focus: fully selected
         s.setSelectionRange(0, s.selectableText.length);
       }
+
+      if (i >= startIdx && i <= endIdx) _applyBandClip(entries[i]);
     }
+  }
+
+  /// Clips [entry]'s selection to the drag's band (see [SelectionColumns]
+  /// for how bands meet rows without any): its own band of the same index,
+  /// band 0 for a drag that started in no band, nothing for a row with no
+  /// such band, and no clip at all for an unsplit row under band 0.
+  void _applyBandClip(_SelectableEntry entry) {
+    final s = entry.selectable;
+    final bands = entry.bands;
+    final band = _pressBand;
+    if (bands == null) {
+      if (band == null || band == 0) {
+        s.setSelectionClip(null, null);
+      } else {
+        s.clearSelection();
+      }
+      return;
+    }
+    final index = band ?? 0;
+    if (index >= bands.length) {
+      s.clearSelection();
+      return;
+    }
+    final originX = s.globalPaintOffset.dx;
+    final (left, right) = bands[index];
+    s.setSelectionClip(
+      (left - originX).round(),
+      right.isFinite ? (right - originX).round() : null,
+    );
+  }
+
+  /// Sets the drag's band from the anchor [entry]: the band holding the
+  /// press column, or the nearest band to a press in a gap between them.
+  void _setPressBand(_SelectableEntry? entry) {
+    final bands = entry?.bands;
+    if (bands == null || bands.isEmpty) {
+      _pressBand = null;
+      _pressBandColumns = null;
+      return;
+    }
+    final x = _pressPosition.dx;
+    var best = 0;
+    var bestDistance = double.infinity;
+    for (var i = 0; i < bands.length; i++) {
+      final (left, right) = bands[i];
+      final distance = x < left
+          ? left - x
+          : x >= right
+              ? x - right + 1
+              : 0.0;
+      if (distance < bestDistance) {
+        best = i;
+        bestDistance = distance;
+      }
+    }
+    _pressBand = best;
+    _pressBandColumns = bands[best];
+  }
+
+  /// [pos] with its column held inside the drag's band — up to the column
+  /// just past it, where the caret sits after the band's last cell.
+  Offset _clampToPressBand(Offset pos) {
+    final columns = _pressBandColumns;
+    if (columns == null) return pos;
+    final (left, right) = columns;
+    final maxX = right.isFinite ? right : pos.dx;
+    if (maxX < left) return Offset(left, pos.dy);
+    return Offset(pos.dx.clamp(left, maxX).toDouble(), pos.dy);
+  }
+
+  /// Whether [entry] can take the focus of a drag inside a band: it takes
+  /// part in the band ([_applyBandClip]) and reaches into its columns.
+  bool _isFocusCandidate(_SelectableEntry entry) {
+    final band = _pressBand!;
+    final bands = entry.bands;
+    if (bands == null) return band == 0;
+    if (band >= bands.length) return false;
+    final (left, right) = bands[band];
+    return entry.bounds.left < right && entry.bounds.right > left;
   }
 
   /// Notifies the callback with the currently selected text.
@@ -930,6 +1109,9 @@ class RenderSelectionArea extends RenderMouseRegion {
     Selectable s,
     int? lastBottomRow,
   ) {
+    if (s.hasSelectionClip) {
+      return _appendClippedTextFromSelectable(buf, s, lastBottomRow);
+    }
     final text = s.selectableText;
     final len = text.length;
     final rawStart = math.min(s.selectionStart!, s.selectionEnd!);
@@ -954,6 +1136,39 @@ class RenderSelectionArea extends RenderMouseRegion {
       lastBottomRow: lastBottomRow,
     );
     return true;
+  }
+
+  /// [_appendSelectedText] for a selectable whose selection is clipped to a
+  /// band: each line's clipped run, joined by the same rules — a newline
+  /// when the run is on a lower row than the last text written, a space
+  /// otherwise.
+  bool _appendClippedTextFromSelectable(
+    StringBuffer buf,
+    Selectable s,
+    int? lastBottomRow,
+  ) {
+    final text = s.selectableText;
+    final lines = s.selectableLayout?.lines ?? const <String>[];
+    final topRow = s.globalPaintOffset.dy.floor();
+    final lineCount = lines.isEmpty ? 1 : lines.length;
+    var wrote = false;
+    for (var li = 0; li < lineCount; li++) {
+      final range = s.selectedRangeOnLine(li);
+      if (range == null) continue;
+      final lineRow = topRow + li;
+      if (buf.isNotEmpty) {
+        if (lastBottomRow != null && lineRow > lastBottomRow) {
+          buf.write('\n');
+        } else {
+          buf.write(' ');
+        }
+      }
+      lastBottomRow = lineRow;
+      buf.write(text.substring(range.$1, range.$2));
+      wrote = true;
+    }
+    if (wrote) _lastBottomRow = lastBottomRow;
+    return wrote;
   }
 
   void _appendSelectedText(
@@ -1069,17 +1284,6 @@ class RenderSelectionArea extends RenderMouseRegion {
     return Rect.fromLTRB(left, top, right, bottom);
   }
 
-  RenderObject? _nearestScrollViewportAncestor(RenderObject ro) {
-    RenderObject? node = ro.parent;
-    while (node != null && node != this) {
-      if (node is RenderListViewport || node is RenderSingleChildViewport) {
-        return node;
-      }
-      node = node.parent;
-    }
-    return null;
-  }
-
   @override
   bool hitTestSelf(Offset position) => true;
 }
@@ -1105,6 +1309,7 @@ class _SelectableEntry {
     required this.contextKey,
     required this.bounds,
     required this.listIndex,
+    this.bands,
   });
 
   final Selectable selectable;
@@ -1112,4 +1317,7 @@ class _SelectableEntry {
   final Object contextKey;
   final Rect bounds;
   final int? listIndex;
+
+  /// Global column bands this selectable is clipped by, or null.
+  final List<(double, double)>? bands;
 }

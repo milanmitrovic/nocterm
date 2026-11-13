@@ -226,6 +226,18 @@ class RenderParagraph extends RenderObject with Selectable {
   TextLayoutResult? get selectableLayout => _layoutResult;
 
   @override
+  int selectionLineXOffset(int lineIndex) {
+    final lines = _layoutResult?.lines;
+    if (lines == null || !hasSize) return 0;
+    if (lineIndex < 0 || lineIndex >= lines.length) return 0;
+    return TextLayoutEngine.calculateAlignmentOffset(
+      lines[lineIndex],
+      size.width.toInt(),
+      _textAlign,
+    ).toInt();
+  }
+
+  @override
   void paint(TerminalCanvas canvas, Offset offset) {
     super.paint(canvas, offset);
 
@@ -290,28 +302,16 @@ class RenderParagraph extends RenderObject with Selectable {
   ) {
     final lines = _layoutResult?.lines ?? const [];
     final text = selectableText;
-    final selStart = selectionStart;
-    final selEnd = selectionEnd;
 
     // Calculate line start offset in the full text
     final lineStartOffset = Selectable.lineStartOffsets(text, lines)[lineIndex];
-    final lineEndOffset = lineStartOffset + lineText.length;
 
-    // Normalize selection range
-    final normalizedSelStart =
-        selStart != null && selEnd != null ? selStart.clamp(0, text.length) : 0;
-    final normalizedSelEnd =
-        selStart != null && selEnd != null ? selEnd.clamp(0, text.length) : 0;
-    final selRangeStart = normalizedSelStart < normalizedSelEnd
-        ? normalizedSelStart
-        : normalizedSelEnd;
-    final selRangeEnd = normalizedSelStart < normalizedSelEnd
-        ? normalizedSelEnd
-        : normalizedSelStart;
-
-    // Check if selection intersects this line
-    final hasLineSelection =
-        selRangeEnd > lineStartOffset && selRangeStart < lineEndOffset;
+    // The selection on this line, cut to the column clip (a band of a
+    // [SelectionSection]); one contiguous run either way.
+    final range = selectedRangeOnLine(lineIndex);
+    final hasLineSelection = range != null;
+    final selRangeStart = range?.$1 ?? 0;
+    final selRangeEnd = range?.$2 ?? 0;
 
     double currentX = offset.dx;
     int charOffset = lineStartOffset;

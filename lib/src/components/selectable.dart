@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:nocterm/nocterm.dart' hide TextAlign;
 import 'package:nocterm/src/framework/terminal_canvas.dart';
 
@@ -45,9 +47,80 @@ mixin Selectable on RenderObject {
     markNeedsPaint();
   }
 
-  /// Clears the current selection.
+  /// Clears the current selection, and its column clip.
   void clearSelection() {
     setSelectionRange(null, null);
+    setSelectionClip(null, null);
+  }
+
+  int? _selectionClipLeft;
+  int? _selectionClipRight;
+
+  /// First column (local to this render object, inclusive) the selection
+  /// is clipped to, or null for no left bound.
+  int? get selectionClipLeft => _selectionClipLeft;
+
+  /// Column after the last one (local, exclusive) the selection is clipped
+  /// to, or null for no right bound.
+  int? get selectionClipRight => _selectionClipRight;
+
+  /// Whether the selection is clipped to a band of columns.
+  bool get hasSelectionClip =>
+      _selectionClipLeft != null || _selectionClipRight != null;
+
+  /// Clips the selection to columns `[left, right)`, local to this render
+  /// object: on every line, only the selected characters inside those
+  /// columns are highlighted and copied. A [SelectionArea] sets this from
+  /// a [SelectionSection]'s or [SelectionColumns]' band. Null bounds are
+  /// open.
+  void setSelectionClip(int? left, int? right) {
+    if (_selectionClipLeft == left && _selectionClipRight == right) return;
+    _selectionClipLeft = left;
+    _selectionClipRight = right;
+    markNeedsPaint();
+  }
+
+  /// Column (local to this render object) at which line [lineIndex] is
+  /// painted — the text alignment's offset. Zero for left-aligned text.
+  int selectionLineXOffset(int lineIndex) => 0;
+
+  /// The selected `[start, end)` character range on line [lineIndex] of
+  /// the layout, after the column clip; null when nothing on that line is
+  /// selected.
+  (int, int)? selectedRangeOnLine(int lineIndex) {
+    final start = _selectionStart;
+    final end = _selectionEnd;
+    if (start == null || end == null || start == end) return null;
+    final text = selectableText;
+    final lines = selectableLayout?.lines ?? const <String>[];
+    final selStart = math.min(start, end).clamp(0, text.length);
+    final selEnd = math.max(start, end).clamp(0, text.length);
+    final String line;
+    final int lineStart;
+    if (lines.isEmpty) {
+      if (lineIndex != 0) return null;
+      line = text;
+      lineStart = 0;
+    } else {
+      if (lineIndex < 0 || lineIndex >= lines.length) return null;
+      line = lines[lineIndex];
+      lineStart = selection_utils.lineStartOffsets(text, lines)[lineIndex];
+    }
+    var a = math.max(selStart, lineStart);
+    var b = math.min(selEnd, lineStart + line.length);
+    if (a >= b) return null;
+    if (hasSelectionClip) {
+      final x0 = selectionLineXOffset(lineIndex);
+      final (ca, cb) = selection_utils.charRangeForColumns(
+        line,
+        _selectionClipLeft == null ? null : _selectionClipLeft! - x0,
+        _selectionClipRight == null ? null : _selectionClipRight! - x0,
+      );
+      a = math.max(a, lineStart + ca);
+      b = math.min(b, lineStart + cb);
+      if (a >= b) return null;
+    }
+    return (a, b);
   }
 
   /// Maps a local position (x, y) to a character index in [selectableText].
@@ -74,6 +147,8 @@ mixin Selectable on RenderObject {
     TextStyle? style,
     int lineIndex,
   ) {
+    // The line's own range: the selection on it, cut to the column clip.
+    final range = selectedRangeOnLine(lineIndex);
     selection_utils.paintTextWithSelection(
       canvas: canvas,
       offset: offset,
@@ -82,8 +157,8 @@ mixin Selectable on RenderObject {
       lineIndex: lineIndex,
       text: selectableText,
       lines: selectableLayout?.lines ?? const [],
-      selectionStart: _selectionStart,
-      selectionEnd: _selectionEnd,
+      selectionStart: range?.$1,
+      selectionEnd: range?.$2,
       selectionColor: selectionColor ?? Colors.blue,
     );
   }
