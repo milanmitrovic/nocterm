@@ -144,32 +144,26 @@ class SelectionColumns extends SingleChildRenderObjectComponent {
   }
 }
 
-/// Pass-through single-child render object carrying selection bands.
-abstract class RenderSelectionBands extends RenderObject
+/// Text that mouse selection never takes part in.
+///
+/// Every [Selectable] under it is drawn as usual but is skipped by a
+/// [SelectionArea]: a press on it is a press on blank space, a drag over
+/// it never highlights it, and a copy never includes it. For decoration
+/// drawn as text — a border or rule glyph, a cursor marker, a separator
+/// between panels — that is not content anyone would copy.
+class SelectionDisabled extends SingleChildRenderObjectComponent {
+  const SelectionDisabled({super.key, required Component child})
+      : super(child: child);
+
+  @override
+  RenderSelectionDisabled createRenderObject(BuildContext context) =>
+      RenderSelectionDisabled();
+}
+
+/// Single-child render object that lays out, paints and hit-tests exactly
+/// as its child does.
+abstract class RenderSelectionPassThrough extends RenderObject
     with RenderObjectWithChildMixin<RenderObject> {
-  RenderSelectionBands({List<SelectionBand>? columns}) : _columns = columns;
-
-  List<SelectionBand>? _columns;
-
-  /// The bands this render object declares, local to it; null for none.
-  List<SelectionBand>? get columns => _columns;
-  set columns(List<SelectionBand>? value) {
-    if (_sameBands(_columns, value)) return;
-    _columns = value;
-    // Bands change no pixels until the next drag; the SelectionArea reads
-    // them afresh on every press. A layout mark invalidates its caches.
-    markNeedsLayout();
-  }
-
-  static bool _sameBands(List<SelectionBand>? a, List<SelectionBand>? b) {
-    if (identical(a, b)) return true;
-    if (a == null || b == null || a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
-
   @override
   void setupParentData(RenderObject child) {
     if (child.parentData is! BoxParentData) {
@@ -202,6 +196,36 @@ abstract class RenderSelectionBands extends RenderObject
     final pd = child!.parentData as BoxParentData;
     return child!.hitTest(result, position: position - pd.offset);
   }
+}
+
+/// Render object of [SelectionDisabled].
+class RenderSelectionDisabled extends RenderSelectionPassThrough {}
+
+/// Pass-through single-child render object carrying selection bands.
+abstract class RenderSelectionBands extends RenderSelectionPassThrough {
+  RenderSelectionBands({List<SelectionBand>? columns}) : _columns = columns;
+
+  List<SelectionBand>? _columns;
+
+  /// The bands this render object declares, local to it; null for none.
+  List<SelectionBand>? get columns => _columns;
+  set columns(List<SelectionBand>? value) {
+    if (_sameBands(_columns, value)) return;
+    _columns = value;
+    // Bands change no pixels until the next drag; the SelectionArea reads
+    // them afresh on every press. A layout mark invalidates its caches.
+    markNeedsLayout();
+  }
+
+  static bool _sameBands(List<SelectionBand>? a, List<SelectionBand>? b) {
+    if (identical(a, b)) return true;
+    if (a == null || b == null || a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
 }
 
 /// Render object of [SelectionSection].

@@ -597,6 +597,8 @@ class RenderSelectionArea extends RenderMouseRegion {
     final paintOrder = <RenderObject, int>{};
     final sections = <RenderSelectionSection>[];
     void visit(RenderObject node) {
+      // Nothing under a SelectionDisabled takes part in a selection.
+      if (node is RenderSelectionDisabled) return;
       if (node is Selectable) {
         paintOrder[node] = paintOrder.length;
         result.add(node);

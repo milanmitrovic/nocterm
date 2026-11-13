@@ -686,4 +686,46 @@ void main() {
     });
   });
 
+  group('SelectionDisabled', () {
+    Component boxed() => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var i = 0; i < 3; i++)
+              Row(
+                children: [
+                  const SelectionDisabled(child: Text('│ ')),
+                  Text('line $i'),
+                  const SelectionDisabled(child: Text(' │')),
+                ],
+              ),
+          ],
+        );
+
+    test('a drag across disabled glyphs copies only the text', () async {
+      await testNocterm('disabled glyphs', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: boxed(),
+        ));
+
+        await _drag(tester, (2, 0), (10, 2));
+        expect(completed, 'line 0\nline 1\nline 2');
+      });
+    });
+
+    test('a press on a disabled glyph is a press on blank space', () async {
+      await testNocterm('disabled press', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: boxed(),
+        ));
+
+        await _drag(tester, (0, 0), (0, 1));
+        expect(completed, '');
+        expect(_highlighted(tester, 0, 0), isFalse);
+      });
+    });
+  });
 }
