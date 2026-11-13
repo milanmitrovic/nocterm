@@ -441,4 +441,110 @@ void main() {
       });
     });
   });
+
+  group('clips bound a selection', () {
+    /// A header over a 3-row ClipRect window onto five rows, scrolled by
+    /// painting the rows two cells above the window: rows 0 and 1 are cut
+    /// off (and row 1 sits under the header's row).
+    Component window() => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('header'),
+            SizedBox(
+              width: 20,
+              height: 3,
+              child: SelectionSection(
+                child: ClipRect(
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        top: -2,
+                        left: 0,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (var i = 0; i < 5; i++) Text('row $i'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+
+    test('a drag up out of a ClipRect window copies no hidden row',
+        () async {
+      await testNocterm('clip rect rows', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: window(),
+        ));
+
+        // Press in `row 3` (screen row 2), drag up over the header.
+        await _drag(tester, (4, 2), (0, 0));
+        expect(completed, 'row 2\nrow ');
+      });
+    });
+
+    test('a press on the header never anchors on a row hidden under it',
+        () async {
+      await testNocterm('clip rect anchor', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: window(),
+        ));
+
+        await _drag(tester, (1, 0), (5, 0));
+        expect(completed, 'eade');
+      });
+    });
+
+    test('columns a clip cuts off are not copied', () async {
+      await testNocterm('clip rect columns', (tester) async {
+        String? completed;
+        await tester.pumpComponent(_area(
+          onCompleted: (t) => completed = t,
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: 6,
+              height: 2,
+              child: ClipRect(
+                child: Stack(
+                  children: [
+                    Positioned(
+                      top: 0,
+                      left: -3,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          RichText(
+                            text: const TextSpan(text: 'abcdefghijkl'),
+                            softWrap: false,
+                          ),
+                          RichText(
+                            text: const TextSpan(text: 'ABCDEFGHIJKL'),
+                            softWrap: false,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ));
+
+        // Screen column 0 shows `d`; the window is six columns wide.
+        await _drag(tester, (0, 0), (2, 1));
+        expect(completed, 'defghi\nDE');
+      });
+    });
+  });
 }

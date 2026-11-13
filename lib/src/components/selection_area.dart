@@ -4,6 +4,7 @@ import 'package:meta/meta.dart';
 import 'package:nocterm/nocterm.dart' hide TextAlign;
 
 import '../rendering/mouse_region.dart';
+import 'render_stack.dart';
 import '../rendering/mouse_tracker.dart';
 import '../text/selection_utils.dart' as selection_utils;
 import 'selection_state.dart';
@@ -736,6 +737,7 @@ class RenderSelectionArea extends RenderMouseRegion {
     }
 
     final lists = <Object, List<_SelectableEntry>>{};
+    final baseBounds = _selectionAreaBounds();
     for (final selectable in selectables) {
       final ro = selectable as RenderObject;
       final origin = selectable.globalPaintOffset;
@@ -745,6 +747,15 @@ class RenderSelectionArea extends RenderMouseRegion {
         ro.hasSize ? ro.size.width : 0,
         ro.hasSize ? ro.size.height : 0,
       );
+      // A row a clip hides entirely (one scrolled out of a ClipRect window,
+      // say) takes no part in a selection: it is neither hit, nor between
+      // anchor and focus, nor copied. Rows a scroll viewport hides stay, so
+      // a drag that scrolls keeps the rows it scrolled past.
+      if (_clipBoundsForSelectable(selectable, baseBounds, viewports: false) ==
+          null) {
+        continue;
+      }
+      final clip = _clipBoundsForSelectable(selectable, baseBounds);
       final contextKey = _contextKeyForSelectable(selectable);
       final entry = _SelectableEntry(
         selectable: selectable,
@@ -753,6 +764,10 @@ class RenderSelectionArea extends RenderMouseRegion {
         bounds: bounds,
         listIndex: _listIndexForSelectable(selectable),
         bands: _bandsForSelectable(selectable),
+        visibleColumns: clip != null &&
+                (clip.left > bounds.left || clip.right < bounds.right)
+            ? (clip.left, clip.right)
+            : null,
       );
       lists.putIfAbsent(contextKey, () => []).add(entry);
     }
@@ -1012,26 +1027,46 @@ class RenderSelectionArea extends RenderMouseRegion {
   /// Clips [entry]'s selection to the drag's band (see [SelectionColumns]
   /// for how bands meet rows without any): its own band of the same index,
   /// band 0 for a drag that started in no band, nothing for a row with no
-  /// such band, and no clip at all for an unsplit row under band 0.
+  /// such band, and no clip at all for an unsplit row under band 0 — and in
+  /// every case to the columns a clip leaves visible, so text a clip hides
+  /// is never highlighted or copied.
   void _applyBandClip(_SelectableEntry entry) {
     final s = entry.selectable;
     final bands = entry.bands;
     final band = _pressBand;
+    (double, double)? columns;
     if (bands == null) {
-      if (band == null || band == 0) {
-        s.setSelectionClip(null, null);
-      } else {
+      if (band != null && band != 0) {
         s.clearSelection();
+        return;
       }
+    } else {
+      final index = band ?? 0;
+      if (index >= bands.length) {
+        s.clearSelection();
+        return;
+      }
+      columns = bands[index];
+    }
+    final visible = entry.visibleColumns;
+    if (visible != null) {
+      columns = columns == null
+          ? visible
+          : (
+              math.max(columns.$1, visible.$1),
+              math.min(columns.$2, visible.$2),
+            );
+    }
+    if (columns == null) {
+      s.setSelectionClip(null, null);
       return;
     }
-    final index = band ?? 0;
-    if (index >= bands.length) {
+    final (left, right) = columns;
+    if (right <= left) {
       s.clearSelection();
       return;
     }
     final originX = s.globalPaintOffset.dx;
-    final (left, right) = bands[index];
     s.setSelectionClip(
       (left - originX).round(),
       right.isFinite ? (right - originX).round() : null,
@@ -1287,13 +1322,44 @@ class RenderSelectionArea extends RenderMouseRegion {
     return Offset(x, y);
   }
 
+  static bool _isViewport(RenderObject node) =>
+      node is RenderListViewport || node is RenderSingleChildViewport;
+
+  /// Whether [node] clips what its subtree paints to its own bounds: a
+  /// scroll viewport, a [RenderClipRect] or a [RenderStack] that clips.
+  static bool _clipsToBounds(RenderObject node) =>
+      _isViewport(node) ||
+      (node is RenderClipRect && node.clipBehavior != Clip.none) ||
+      (node is RenderStack && node.clipBehavior != Clip.none);
+
   /// Walk the parent chain of [selectable] up to this SelectionArea,
-  /// intersecting with any scroll viewport bounds encountered.
-  Rect? _clipBoundsForSelectable(Selectable selectable, Rect baseBounds) {
+  /// intersecting with the bounds of every clip encountered (see
+  /// [_clipsToBounds]); null when they hide [selectable] entirely.
+  ///
+  /// With [viewports] false the walk asks only whether the clips between
+  /// [selectable] and its nearest scroll viewport hide it — a row scrolled
+  /// out of a viewport still takes part in a drag that scrolls; one cut
+  /// off by a [ClipRect] window does not.
+  Rect? _clipBoundsForSelectable(
+    Selectable selectable,
+    Rect baseBounds, {
+    bool viewports = true,
+  }) {
+    final ro = selectable as RenderObject;
     Rect? clip = baseBounds;
-    RenderObject? node = (selectable as RenderObject).parent;
+    if (!viewports) {
+      final origin = selectable.globalPaintOffset;
+      clip = Rect.fromLTWH(
+        origin.dx,
+        origin.dy,
+        ro.hasSize ? math.max(ro.size.width, 1) : 1,
+        ro.hasSize ? math.max(ro.size.height, 1) : 1,
+      );
+    }
+    RenderObject? node = ro.parent;
     while (node != null && node != this) {
-      if (node is RenderListViewport || node is RenderSingleChildViewport) {
+      if (!viewports && _isViewport(node)) break;
+      if (_clipsToBounds(node)) {
         final vpOffset = _globalPaintOffsetOf(node);
         final vpBounds = Rect.fromLTWH(
           vpOffset.dx,
@@ -1365,6 +1431,7 @@ class _SelectableEntry {
     required this.bounds,
     required this.listIndex,
     this.bands,
+    this.visibleColumns,
   });
 
   final Selectable selectable;
@@ -1375,4 +1442,8 @@ class _SelectableEntry {
 
   /// Global column bands this selectable is clipped by, or null.
   final List<(double, double)>? bands;
+
+  /// Global columns `[left, right)` a clip leaves visible of this
+  /// selectable, when a clip hides some of its columns; else null.
+  final (double, double)? visibleColumns;
 }
