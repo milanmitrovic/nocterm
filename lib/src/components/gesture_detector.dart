@@ -324,6 +324,15 @@ class _RenderGestureDetector extends RenderMouseRegion
   // Track button press state to detect state transitions
   bool _isLeftButtonPressed = false;
 
+  /// Whether [event] is a drag passing over this detector: a MOTION event
+  /// whose left button the mouse tracker already holds down from a press
+  /// made before it ([MouseEvent.buttons] carries only buttons pressed by
+  /// non-motion events). The press happened somewhere else, so this is no
+  /// press here. A terminal that flags the press ITSELF as motion sends it
+  /// before any press is held, so it still reads as a press.
+  static bool _isDragThrough(MouseEvent event) =>
+      event.isMotion && event.buttons.contains(MouseButton.left);
+
   @override
   MouseTrackerAnnotation? get annotation =>
       _gestureAnnotation ?? super.annotation;
@@ -335,8 +344,11 @@ class _RenderGestureDetector extends RenderMouseRegion
         // but don't trigger pointer down unless button is pressed during entry
         if (event.button == MouseButton.left) {
           final leftDown = event.pressed || event.isPrimaryButtonDown;
-          if (leftDown && !_isLeftButtonPressed) {
-            // Button is pressed as we enter - treat as new press
+          if (leftDown && !_isLeftButtonPressed && !_isDragThrough(event)) {
+            // Button is pressed as we enter - treat as new press. Not for
+            // a drag that began elsewhere passing over this detector (a
+            // text selection, say): that is no press here, so its release
+            // must not tap this detector.
             _isLeftButtonPressed = true;
             _onPointerDown(event);
           } else if (!leftDown) {
@@ -370,8 +382,9 @@ class _RenderGestureDetector extends RenderMouseRegion
         // This works regardless of the isMotion flag by tracking actual state changes
         if (event.button == MouseButton.left) {
           final leftDown = event.pressed || event.isPrimaryButtonDown;
-          if (leftDown && !_isLeftButtonPressed) {
-            // Button was just pressed while hovering
+          if (leftDown && !_isLeftButtonPressed && !_isDragThrough(event)) {
+            // Button was just pressed while hovering (a drag moving in
+            // from elsewhere is no press: see onEnter)
             _isLeftButtonPressed = true;
             _onPointerDown(event);
           } else if (!leftDown && _isLeftButtonPressed) {
