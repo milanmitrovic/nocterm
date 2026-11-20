@@ -208,6 +208,25 @@ void main() {
       );
     });
 
+    test('move lays the parent out again, unless the order is unchanged',
+        () {
+      final parent = flex();
+      final a = box();
+      final b = box();
+      parent.insert(a);
+      parent.insert(b, after: a);
+      parent.layout(const BoxConstraints(maxWidth: 10, maxHeight: 1));
+      expect(parent.needsLayout, isFalse);
+
+      parent.move(b, after: a);
+      expect(parent.needsLayout, isFalse, reason: 'b already follows a');
+
+      parent.move(b);
+      expect(parent.children, [b, a]);
+      expect(parent.needsLayout, isTrue,
+          reason: 'a Row places its children in list order');
+    });
+
     test('CONTROL: insert and move place a child after `after`, or first', () {
       final parent = flex();
       final a = box();
