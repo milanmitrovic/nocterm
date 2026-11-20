@@ -152,6 +152,12 @@ abstract class Element implements BuildContext {
         }
         newChild = child;
       } else if (Component.canUpdate(child.component, newComponent)) {
+        // Move a reused child to its new slot BEFORE updating it (as
+        // Flutter does): otherwise its render object stays where it was,
+        // and a proxy that replaces its own child hands the stale slot on.
+        if (child.slot != newSlot) {
+          updateSlotForChild(child, newSlot);
+        }
         child.update(newComponent);
         newChild = child;
       } else {

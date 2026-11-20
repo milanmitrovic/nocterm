@@ -785,8 +785,11 @@ mixin ContainerRenderObjectMixin<ChildType extends RenderObject>
       _children.insert(0, child);
     } else {
       final int index = _children.indexOf(after);
+      // An `after` that is not a child is a stale slot upstream; appending
+      // would hide it by drawing the child out of order.
+      assert(index >= 0, 'insert: `after` ($after) is not a child of $this');
       if (index < 0) {
-        // If 'after' is not found, add at the end as fallback
+        // Release builds: add at the end rather than throw.
         _children.add(child);
       } else {
         // Insert after the specified child
@@ -798,20 +801,27 @@ mixin ContainerRenderObjectMixin<ChildType extends RenderObject>
   /// Move a child to a new position in the children list
   void move(ChildType child, {ChildType? after}) {
     assert(_children.contains(child));
-    _children.remove(child);
+    final int oldIndex = _children.indexOf(child);
+    final ChildType? oldAfter = oldIndex > 0 ? _children[oldIndex - 1] : null;
+    if (identical(oldAfter, after)) return;
+    _children.removeAt(oldIndex);
     if (after == null) {
       // Move to the beginning
       _children.insert(0, child);
     } else {
       final int index = _children.indexOf(after);
+      assert(index >= 0, 'move: `after` ($after) is not a child of $this');
       if (index < 0) {
-        // If 'after' is not found, add at the end as fallback
+        // Release builds: add at the end rather than throw.
         _children.add(child);
       } else {
         // Insert after the specified child
         _children.insert(index + 1, child);
       }
     }
+    // The order is the layout (a Row places its children in list order):
+    // lay out again, as Flutter does.
+    markNeedsLayout();
   }
 
   void removeAll() {
