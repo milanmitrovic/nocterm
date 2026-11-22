@@ -39,3 +39,19 @@ class ColorSchemeInputEvent extends InputEvent {
 
   const ColorSchemeInputEvent(this.notice);
 }
+
+/// A reply the terminal sent to a query: a kitty graphics reply
+/// (`ESC _ G … ESC \`), a DA1 reply (`CSI ? … c`), or a cell-size report
+/// (`CSI 6 ; h ; w t`).
+///
+/// Claimed by the input parser so a probe's answers never reach the app as
+/// keystrokes; the binding surfaces them on `terminalReplies`. [reply] is
+/// the sequence verbatim, introducer and terminator included.
+class TerminalReplyInputEvent extends InputEvent {
+  final String reply;
+
+  const TerminalReplyInputEvent(this.reply);
+
+  @override
+  String toString() => 'TerminalReplyInputEvent(${reply.codeUnits})';
+}

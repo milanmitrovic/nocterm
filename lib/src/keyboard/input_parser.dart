@@ -131,6 +131,18 @@ class InputParser {
       }
     }
 
+    // Replies to terminal queries (the graphics probe): kitty graphics
+    // `ESC _ G … ESC \`, DA1 `CSI ? … c`, window reports `CSI Ps ; … t`.
+    // Claimed ahead of the keyboard path so they never leak as keystrokes.
+    if (first == 0x1B) {
+      final replyLength = _terminalReplyLength();
+      if (replyLength == 0) return null; // Incomplete — wait for more.
+      if (replyLength > 0) {
+        final reply = String.fromCharCodes(_buffer.sublist(0, replyLength));
+        return (TerminalReplyInputEvent(reply), replyLength);
+      }
+    }
+
     // Try to parse as keyboard event
     final result = _parseKeyboardEvent();
     if (result != null) {
@@ -666,6 +678,60 @@ class InputParser {
     // Need more bytes
     return null;
   }
+
+  /// Longest APC reply we wait for before giving the bytes back to the
+  /// keyboard path; kitty graphics replies are a few dozen bytes.
+  static const _maxApcReplyLength = 4096;
+
+  /// Length of the terminal reply at the start of the buffer.
+  ///
+  /// Returns the byte count of a complete reply, 0 when the buffer holds the
+  /// start of one that is not complete yet, and -1 when the buffer does not
+  /// start with a reply (the caller falls through to other parsers).
+  ///
+  /// Claims:
+  /// - `ESC _ G … ESC \` — kitty graphics reply. Only `ESC _ G`, so a bare
+  ///   Alt+_ (`ESC _`) still parses as before.
+  /// - `ESC [ ? <digits;…> c` — DA1 reply.
+  /// - `ESC [ <digits;…> t` — window-op reports such as the `CSI 16 t`
+  ///   answer `CSI 6 ; h ; w t`. Only claimed once complete; an incomplete
+  ///   one is left to the keyboard path, which shares the `ESC [ digits`
+  ///   prefix with modified keys.
+  int _terminalReplyLength() {
+    if (_buffer.length < 3) return -1;
+    final second = _buffer[1];
+
+    if (second == 0x5F /* _ */) {
+      if (_buffer[2] != 0x47 /* G */) return -1;
+      for (var i = 3; i + 1 < _buffer.length; i++) {
+        if (_buffer[i] == 0x1B && _buffer[i + 1] == 0x5C /* \ */) {
+          return i + 2;
+        }
+      }
+      return _buffer.length > _maxApcReplyLength ? -1 : 0;
+    }
+
+    if (second != 0x5B /* [ */) return -1;
+
+    if (_buffer[2] == 0x3F /* ? */) {
+      var i = 3;
+      while (i < _buffer.length && _isDigitOrSemicolon(_buffer[i])) {
+        i++;
+      }
+      if (i >= _buffer.length) return 0;
+      return _buffer[i] == 0x63 /* c */ ? i + 1 : -1;
+    }
+
+    var i = 2;
+    while (i < _buffer.length && _isDigitOrSemicolon(_buffer[i])) {
+      i++;
+    }
+    if (i == 2 || i >= _buffer.length) return -1;
+    return _buffer[i] == 0x74 /* t */ ? i + 1 : -1;
+  }
+
+  static bool _isDigitOrSemicolon(int b) =>
+      (b >= 0x30 && b <= 0x39) || b == 0x3B;
 
   /// Parse a colour-scheme report: `ESC [ ? 997 ; <value> n`.
   ///
