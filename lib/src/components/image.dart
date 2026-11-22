@@ -7,6 +7,7 @@ import 'package:meta/meta.dart';
 import 'package:nocterm/nocterm.dart';
 import 'package:nocterm/src/framework/terminal_canvas.dart';
 import 'package:nocterm/src/image/color_quantizer.dart';
+import 'package:nocterm/src/image/graphics_caps.dart';
 import 'package:nocterm/src/image/image_cleanup.dart';
 import 'package:nocterm/src/image/iterm2_encoder.dart';
 import 'package:nocterm/src/image/kitty_encoder.dart';
@@ -555,14 +556,42 @@ class RenderImage extends RenderObject {
         _fit = fit,
         _protocol = protocol;
 
-  /// Assumed pixels per cell (width x height).
-  /// Common terminal defaults are 8x16 or 10x20.
-  static const int cellPixelWidth = 8;
-  static const int cellPixelHeight = 16;
+  /// Pixels per cell (width), from [GraphicsCaps.current]: the probed size,
+  /// or 8 when the terminal did not say.
+  static int get cellPixelWidth => GraphicsCaps.current.cellPixelSize.width;
 
-  /// Cached detected protocol for the current terminal.
-  /// This is lazily initialized on first use.
-  static ImageProtocol? _detectedProtocol;
+  /// Pixels per cell (height), from [GraphicsCaps.current]: the probed
+  /// size, or 16 when the terminal did not say.
+  static int get cellPixelHeight => GraphicsCaps.current.cellPixelSize.height;
+
+  /// The protocol used when none is requested: kitty graphics when the
+  /// probe found them, otherwise Unicode half blocks.
+  static ImageProtocol protocolFor(GraphicsCaps caps) =>
+      caps.kitty ? ImageProtocol.kitty : ImageProtocol.unicodeBlocks;
+
+  StreamSubscription<GraphicsCaps>? _capsSubscription;
+
+  /// Cell size the cached scaled image was made for.
+  CellPixelSize? _cachedCellPixelSize;
+
+  @override
+  void attach(PipelineOwner owner) {
+    super.attach(owner);
+    _capsSubscription ??= GraphicsCaps.changes.listen((_) {
+      _cachedEncodedData = null;
+      _cachedScaledImage = null;
+      _cachedBlockCells = null;
+      _kittyImageId = null;
+      markNeedsLayout();
+    });
+  }
+
+  @override
+  void detach() {
+    _capsSubscription?.cancel();
+    _capsSubscription = null;
+    super.detach();
+  }
 
   ImageData _imageData;
   ImageData get imageData => _imageData;
@@ -733,58 +762,11 @@ class RenderImage extends RenderObject {
   // Cached block cells for unicode blocks rendering
   List<List<BlockCell>>? _cachedBlockCells;
 
-  /// Detect the best available protocol based on terminal capabilities.
-  ///
-  /// Priority order:
-  /// 1. Kitty (best quality, native cleanup support)
-  /// 2. Sixel (widely supported)
-  /// 3. iTerm2 (macOS terminals)
-  /// 4. Unicode blocks (universal fallback)
-  static ImageProtocol _detectProtocol() {
-    if (_detectedProtocol != null) {
-      return _detectedProtocol!;
-    }
-
-    final term = io.Platform.environment['TERM']?.toLowerCase() ?? '';
-    final termProgram =
-        io.Platform.environment['TERM_PROGRAM']?.toLowerCase() ?? '';
-
-    // Check for Kitty terminal
-    if (term.contains('kitty') ||
-        io.Platform.environment.containsKey('KITTY_WINDOW_ID')) {
-      _detectedProtocol = ImageProtocol.kitty;
-      return _detectedProtocol!;
-    }
-
-    // Check for WezTerm (supports Kitty protocol)
-    if (termProgram.contains('wezterm') || term.contains('wezterm')) {
-      _detectedProtocol = ImageProtocol.kitty;
-      return _detectedProtocol!;
-    }
-
-    // Check for iTerm2
-    if (termProgram.contains('iterm') ||
-        io.Platform.environment.containsKey('ITERM_SESSION_ID')) {
-      _detectedProtocol = ImageProtocol.iterm2;
-      return _detectedProtocol!;
-    }
-
-    // Check for known Sixel-supporting terminals
-    const sixelTerms = ['xterm', 'mlterm', 'yaft', 'foot', 'contour', 'mintty'];
-    for (final sixelTerm in sixelTerms) {
-      if (term.contains(sixelTerm)) {
-        _detectedProtocol = ImageProtocol.sixel;
-        return _detectedProtocol!;
-      }
-    }
-
-    // Default to unicode blocks (universal fallback)
-    _detectedProtocol = ImageProtocol.unicodeBlocks;
-    return _detectedProtocol!;
-  }
-
-  /// Get the effective protocol (user-specified or auto-detected).
-  ImageProtocol get _effectiveProtocol => _protocol ?? _detectProtocol();
+  /// The protocol in use: the one requested, else [protocolFor] the probed
+  /// [GraphicsCaps.current] (set by the binding's graphics probe — no
+  /// environment sniffing).
+  ImageProtocol get _effectiveProtocol =>
+      _protocol ?? protocolFor(GraphicsCaps.current);
 
   @override
   void paint(TerminalCanvas canvas, Offset offset) {
@@ -796,6 +778,15 @@ class RenderImage extends RenderObject {
     }
 
     final effectiveProtocol = _effectiveProtocol;
+
+    // Caps can change while detached (no listener then); rescale if so.
+    final cellPixelSize = GraphicsCaps.current.cellPixelSize;
+    if (_cachedCellPixelSize != cellPixelSize) {
+      _cachedCellPixelSize = cellPixelSize;
+      _cachedScaledImage = null;
+      _cachedBlockCells = null;
+      _cachedEncodedData = null;
+    }
 
     // Calculate pixel dimensions for the target cell size
     final targetPixelWidth = size.width.toInt() * cellPixelWidth;
