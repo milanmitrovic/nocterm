@@ -10,7 +10,7 @@ import 'package:nocterm/src/image/color_quantizer.dart';
 import 'package:nocterm/src/image/graphics_caps.dart';
 import 'package:nocterm/src/image/image_cleanup.dart';
 import 'package:nocterm/src/image/iterm2_encoder.dart';
-import 'package:nocterm/src/image/kitty_encoder.dart';
+import 'package:nocterm/src/image/kitty_placer.dart';
 import 'package:nocterm/src/image/sixel_encoder.dart';
 import 'package:nocterm/src/image/unicode_block_encoder.dart';
 
@@ -355,6 +355,7 @@ class Image extends StatefulComponent {
     this.placeholder,
     this.errorWidget,
     this.protocol,
+    this.contentKey,
   });
 
   /// Creates an image widget from a file path.
@@ -367,6 +368,7 @@ class Image extends StatefulComponent {
     this.placeholder,
     this.errorWidget,
     this.protocol,
+    this.contentKey,
   }) : image = FileImage(path);
 
   /// Creates an image widget from a URL.
@@ -379,6 +381,7 @@ class Image extends StatefulComponent {
     this.placeholder,
     this.errorWidget,
     this.protocol,
+    this.contentKey,
   }) : image = NetworkImage(url);
 
   /// Creates an image widget from bytes in memory.
@@ -391,6 +394,7 @@ class Image extends StatefulComponent {
     this.placeholder,
     this.errorWidget,
     this.protocol,
+    this.contentKey,
   }) : image = MemoryImage(bytes);
 
   /// The image to display.
@@ -420,6 +424,12 @@ class Image extends StatefulComponent {
   /// If null, the best available protocol will be auto-detected based on
   /// terminal capabilities.
   final ImageProtocol? protocol;
+
+  /// A stable name for the image's content, such as a blob hash.
+  ///
+  /// The kitty image id is derived from it instead of from hashing the
+  /// pixels: the same key is the same picture, stored once by the terminal.
+  final String? contentKey;
 
   @override
   State<Image> createState() => _ImageState();
@@ -493,6 +503,7 @@ class _ImageState extends State<Image> {
       height: component.height,
       fit: component.fit,
       protocol: component.protocol,
+      contentKey: component.contentKey,
     );
   }
 }
@@ -505,6 +516,7 @@ class _RawImage extends SingleChildRenderObjectComponent {
     this.height,
     this.fit = BoxFit.contain,
     this.protocol,
+    this.contentKey,
   });
 
   final ImageData imageData;
@@ -512,6 +524,7 @@ class _RawImage extends SingleChildRenderObjectComponent {
   final int? height;
   final BoxFit fit;
   final ImageProtocol? protocol;
+  final String? contentKey;
 
   @override
   RenderObject createRenderObject(BuildContext context) {
@@ -521,6 +534,7 @@ class _RawImage extends SingleChildRenderObjectComponent {
       requestedHeight: height,
       fit: fit,
       protocol: protocol,
+      contentKey: contentKey,
     );
   }
 
@@ -531,7 +545,8 @@ class _RawImage extends SingleChildRenderObjectComponent {
       ..requestedWidth = width
       ..requestedHeight = height
       ..fit = fit
-      ..protocol = protocol;
+      ..protocol = protocol
+      ..contentKey = contentKey;
   }
 }
 
@@ -550,11 +565,13 @@ class RenderImage extends RenderObject {
     int? requestedHeight,
     BoxFit fit = BoxFit.contain,
     ImageProtocol? protocol,
+    String? contentKey,
   })  : _imageData = imageData,
         _requestedWidth = requestedWidth,
         _requestedHeight = requestedHeight,
         _fit = fit,
-        _protocol = protocol;
+        _protocol = protocol,
+        _contentKey = contentKey;
 
   /// Pixels per cell (width), from [GraphicsCaps.current]: the probed size,
   /// or 8 when the terminal did not say.
@@ -581,7 +598,6 @@ class RenderImage extends RenderObject {
       _cachedEncodedData = null;
       _cachedScaledImage = null;
       _cachedBlockCells = null;
-      _kittyImageId = null;
       markNeedsLayout();
     });
   }
@@ -601,8 +617,19 @@ class RenderImage extends RenderObject {
     _cachedEncodedData = null;
     _cachedScaledImage = null;
     _cachedBlockCells = null;
-    _kittyImageId = null; // Reset so new ID is generated on next paint
+    _kittyImage = null;
     markNeedsLayout();
+  }
+
+  String? _contentKey;
+
+  /// See [Image.contentKey].
+  String? get contentKey => _contentKey;
+  set contentKey(String? value) {
+    if (_contentKey == value) return;
+    _contentKey = value;
+    _kittyImage = null;
+    markNeedsPaint();
   }
 
   int? _requestedWidth;
@@ -613,7 +640,6 @@ class RenderImage extends RenderObject {
     _cachedEncodedData = null;
     _cachedScaledImage = null;
     _cachedBlockCells = null;
-    _kittyImageId = null; // Reset so new ID is generated on next paint
     markNeedsLayout();
   }
 
@@ -625,7 +651,6 @@ class RenderImage extends RenderObject {
     _cachedEncodedData = null;
     _cachedScaledImage = null;
     _cachedBlockCells = null;
-    _kittyImageId = null; // Reset so new ID is generated on next paint
     markNeedsLayout();
   }
 
@@ -637,7 +662,6 @@ class RenderImage extends RenderObject {
     _cachedEncodedData = null;
     _cachedScaledImage = null;
     _cachedBlockCells = null;
-    _kittyImageId = null; // Reset so new ID is generated on next paint
     markNeedsLayout();
   }
 
@@ -649,7 +673,6 @@ class RenderImage extends RenderObject {
     _cachedEncodedData = null;
     _cachedScaledImage = null;
     _cachedBlockCells = null;
-    _kittyImageId = null; // Reset Kitty image ID when protocol changes
     markNeedsLayout();
   }
 
@@ -663,10 +686,13 @@ class RenderImage extends RenderObject {
   ImageRegistration? _imageRegistration;
   int? _lastPaintX;
   int? _lastPaintY;
-  int? _lastRegisteredKittyId; // Track registered ID to detect changes
 
-  // Kitty protocol specific: unique image ID for cleanup
-  int? _kittyImageId;
+  /// The pixels as a kitty image, its id from [contentKey] or the pixels.
+  /// Kitty scales them into the cell box, so a resize keeps the image.
+  KittyImage? _kittyImage;
+
+  /// This render object's kitty placement slot, kept for its lifetime.
+  final int _placementId = KittyPlacer.nextPlacementId();
 
   @override
   void performLayout() {
@@ -748,8 +774,6 @@ class RenderImage extends RenderObject {
       _cachedEncodedData = null;
       _cachedScaledImage = null;
       _cachedBlockCells = null;
-      _kittyImageId =
-          null; // Reset to generate new image with correct dimensions
       _cachedLayoutWidth = size.width.toInt();
       _cachedLayoutHeight = size.height.toInt();
     }
@@ -811,9 +835,32 @@ class RenderImage extends RenderObject {
     final w = size.width.toInt();
     final h = size.height.toInt();
 
-    // Handle Unicode blocks differently - render cell by cell
-    if (effectiveProtocol == ImageProtocol.unicodeBlocks) {
+    // A graphics protocol cannot crop to the clip: an image not wholly
+    // inside the canvas (half scrolled, cut by an edge) shows the half-block
+    // preview this frame instead.
+    final fitsCanvas = x >= 0 &&
+        y >= 0 &&
+        x + w <= canvas.area.width &&
+        y + h <= canvas.area.height;
+
+    if (effectiveProtocol == ImageProtocol.unicodeBlocks || !fitsCanvas) {
+      _releaseImageRegistration();
       _paintUnicodeBlocks(canvas, offset);
+      return;
+    }
+
+    if (effectiveProtocol == ImageProtocol.kitty) {
+      _releaseImageRegistration();
+      // The preview goes underneath: it is what shows if something later
+      // paints over part of the image and takes it off the kitty layer.
+      _paintUnicodeBlocks(canvas, offset);
+      _kittyImage ??= KittyImage.fromRgba(
+        _imageData.pixels,
+        _imageData.width,
+        _imageData.height,
+        contentKey: _contentKey,
+      );
+      canvas.placeImage(_kittyImage!, _placementId, x, y, w, h);
       return;
     }
 
@@ -821,11 +868,9 @@ class RenderImage extends RenderObject {
     _cachedEncodedData ??= _encodeForProtocol(effectiveProtocol);
 
     // Register/update image for cleanup tracking
-    // Re-register if position changed, no registration exists, or kittyImageId changed
-    final needsReregistration = _lastPaintX != x ||
-        _lastPaintY != y ||
-        _imageRegistration == null ||
-        _lastRegisteredKittyId != _kittyImageId;
+    // Re-register if the position changed or no registration exists
+    final needsReregistration =
+        _lastPaintX != x || _lastPaintY != y || _imageRegistration == null;
 
     if (needsReregistration) {
       // Dispose old registration to trigger cleanup of old image
@@ -836,11 +881,9 @@ class RenderImage extends RenderObject {
         width: w,
         height: h,
         protocol: effectiveProtocol,
-        kittyImageId: _kittyImageId,
       );
       _lastPaintX = x;
       _lastPaintY = y;
-      _lastRegisteredKittyId = _kittyImageId;
     }
 
     // Draw the image using protocol-specific escape sequences
@@ -852,6 +895,15 @@ class RenderImage extends RenderObject {
       w,
       h,
     );
+  }
+
+  /// Stops tracking a sixel/iTerm2 region (scheduling its blanking), for
+  /// when this image is no longer drawn that way.
+  void _releaseImageRegistration() {
+    _imageRegistration?.dispose();
+    _imageRegistration = null;
+    _lastPaintX = null;
+    _lastPaintY = null;
   }
 
   /// Paint using Unicode block characters cell-by-cell.
@@ -907,20 +959,6 @@ class RenderImage extends RenderObject {
     final scaledImage = _cachedScaledImage!;
 
     switch (protocol) {
-      case ImageProtocol.kitty:
-        // Generate a unique Kitty image ID for cleanup tracking
-        // Use original full-resolution image for best quality
-        // Kitty will scale it down to the specified cell dimensions
-        _kittyImageId = KittyEncoder.getNextImageId();
-        return KittyEncoder.encodeRgba(
-          rgbaPixels: _imageData.pixels,
-          width: _imageData.width,
-          height: _imageData.height,
-          imageId: _kittyImageId,
-          displayColumns: size.width.toInt(),
-          displayRows: size.height.toInt(),
-        );
-
       case ImageProtocol.sixel:
         // Quantize colors for Sixel (requires palette)
         if (_cachedPalette == null || _cachedIndexedPixels == null) {
@@ -952,9 +990,10 @@ class RenderImage extends RenderObject {
           displayHeight: '${size.height.toInt()}',
         );
 
+      case ImageProtocol.kitty:
       case ImageProtocol.unicodeBlocks:
-        // Unicode blocks are handled separately in _paintUnicodeBlocks
-        // This should not be called for unicode blocks
+        // Kitty goes through KittyPlacer and blocks are cells: neither is
+        // encoded here.
         return '';
     }
   }

@@ -5,6 +5,7 @@ import 'package:characters/characters.dart';
 import 'package:nocterm/src/rectangle.dart';
 
 import '../buffer.dart';
+import '../image/kitty_placer.dart';
 import '../style.dart';
 import '../utils/unicode_width.dart';
 import 'framework.dart';
@@ -336,6 +337,36 @@ class TerminalCanvas {
 
     // Mark cells as image placeholders to prevent text overlap
     _buffer.markImageRegion(cellX, cellY, maxWidth, maxHeight, sixelData);
+  }
+
+  /// Show [image] in the [columns]x[rows] cell box at local ([x], [y]) on
+  /// the kitty layer, as slot [placementId].
+  ///
+  /// Only a box wholly inside this canvas is placed — kitty cannot crop a
+  /// placement to a clip — so this returns false, placing nothing, for a
+  /// box that sticks out; the caller paints a fallback instead.
+  bool placeImage(
+    KittyImage image,
+    int placementId,
+    int x,
+    int y,
+    int columns,
+    int rows,
+  ) {
+    if (x < 0 ||
+        y < 0 ||
+        x + columns > area.width ||
+        y + rows > area.height) {
+      return false;
+    }
+    return _buffer.addImagePlacement(ImagePlacement(
+      image: image,
+      placementId: placementId,
+      x: area.left.round() + x,
+      y: area.top.round() + y,
+      columns: columns,
+      rows: rows,
+    ));
   }
 
   Rect _intersect(Rect a, Rect b) {

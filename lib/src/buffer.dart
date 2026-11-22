@@ -1,6 +1,8 @@
 import 'package:characters/characters.dart';
 import 'package:nocterm/src/rectangle.dart';
 
+import 'image/kitty_placer.dart';
+
 import 'style.dart';
 import 'utils/unicode_width.dart';
 
@@ -93,6 +95,65 @@ class Buffer {
   /// cleared by the terminal renderer after each frame.
   final List<PendingImage> pendingImages = [];
 
+  /// Kitty images painted this frame, in paint order, each with whether a
+  /// later image painted over it.
+  final List<(ImagePlacement, bool)> _placements = [];
+
+  /// The kitty placements this frame shows: every image added with
+  /// [addImagePlacement] that nothing painted over afterwards — no text in
+  /// any of its cells, no later image overlapping it.
+  ///
+  /// The binding hands these to its KittyPlacer after the text diff; a
+  /// test binding or spec snapshot reads them to see where images went.
+  List<ImagePlacement> get imagePlacements => [
+        for (final (placement, covered) in _placements)
+          if (!covered && _intact(placement)) placement,
+      ];
+
+  bool _intact(ImagePlacement p) {
+    for (int cy = p.y; cy < p.y + p.rows; cy++) {
+      for (int cx = p.x; cx < p.x + p.columns; cx++) {
+        if (!cells[cy][cx].isImagePlaceholder) return false;
+      }
+    }
+    return true;
+  }
+
+  /// Records [placement] for the kitty layer and marks its cells as image
+  /// placeholders, keeping what is painted in them (the half-block preview
+  /// shown if the image ends up covered).
+  ///
+  /// Returns false, recording nothing, unless the box lies wholly inside
+  /// the buffer.
+  bool addImagePlacement(ImagePlacement placement) {
+    final p = placement;
+    if (p.columns <= 0 ||
+        p.rows <= 0 ||
+        p.x < 0 ||
+        p.y < 0 ||
+        p.x + p.columns > width ||
+        p.y + p.rows > height) {
+      return false;
+    }
+    for (int i = 0; i < _placements.length; i++) {
+      final (other, covered) = _placements[i];
+      if (!covered && _overlaps(other, p)) _placements[i] = (other, true);
+    }
+    for (int cy = p.y; cy < p.y + p.rows; cy++) {
+      for (int cx = p.x; cx < p.x + p.columns; cx++) {
+        cells[cy][cx] = cells[cy][cx].copyWith(isImagePlaceholder: true);
+      }
+    }
+    _placements.add((p, false));
+    return true;
+  }
+
+  static bool _overlaps(ImagePlacement a, ImagePlacement b) =>
+      a.x < b.x + b.columns &&
+      b.x < a.x + a.columns &&
+      a.y < b.y + b.rows &&
+      b.y < a.y + a.rows;
+
   Buffer(this.width, this.height)
       : cells = List.generate(
           height,
@@ -148,6 +209,7 @@ class Buffer {
       }
     }
     pendingImages.clear();
+    _placements.clear();
   }
 
   void fillArea(Rect area, String char, {TextStyle? style}) {

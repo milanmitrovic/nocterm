@@ -39,8 +39,14 @@ TerminalCanvas _screen(Buffer buffer) =>
 
 List<int> _cells(ImagePlacement p) => [p.x, p.y, p.columns, p.rows];
 
-bool _isHalfBlock(Cell cell) =>
-    cell.char == '▀' || cell.char == '▄' || cell.char == '█';
+/// Whether [cell] shows the red half-block preview (a block glyph or a
+/// coloured space, in the image's red).
+bool _isHalfBlock(Cell cell) {
+  bool red(Color? c) =>
+      c != null && c.red == 255 && c.green == 0 && c.blue == 0;
+  return const {'▀', '▄', '█', ' '}.contains(cell.char) &&
+      (red(cell.style.color) || red(cell.style.backgroundColor));
+}
 
 void main() {
   tearDown(() => GraphicsCaps.current = GraphicsCaps.unknown);
