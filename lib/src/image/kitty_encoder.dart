@@ -63,6 +63,45 @@ class KittyEncoder {
     return buffer.toString();
   }
 
+  /// Transmit PNG bytes as image [imageId] without displaying them
+  /// (`a=t`), chunked; place them later with [place].
+  static String transmitPng({
+    required Uint8List pngBytes,
+    required int imageId,
+    int quiet = 2,
+  }) =>
+      _encodeWithChunking(base64Encode(pngBytes), {
+        'a': 't',
+        'f': 100,
+        'i': imageId,
+        'q': quiet,
+      });
+
+  /// Show transmitted image [imageId] at the cursor, scaled to
+  /// [columns]x[rows] cells, as placement [placementId] (`a=p`). The cursor
+  /// does not move (`C=1`). The same id pair replaces an earlier placement.
+  static String place({
+    required int imageId,
+    required int placementId,
+    required int columns,
+    required int rows,
+    int quiet = 2,
+  }) =>
+      '${_apcStart}a=p,i=$imageId,p=$placementId,c=$columns,r=$rows,C=1,'
+      'q=$quiet$_st';
+
+  /// Remove one placement, keeping the image data (`d=i`).
+  static String deletePlacement({
+    required int imageId,
+    required int placementId,
+    int quiet = 2,
+  }) =>
+      '${_apcStart}a=d,d=i,i=$imageId,p=$placementId,q=$quiet$_st';
+
+  /// Remove image [imageId]: every placement and its data (`d=I`).
+  static String deleteImage({required int imageId, int quiet = 2}) =>
+      '${_apcStart}a=d,d=I,i=$imageId,q=$quiet$_st';
+
   /// Delete all images from the terminal.
   ///
   /// [quiet] - Suppress terminal response
