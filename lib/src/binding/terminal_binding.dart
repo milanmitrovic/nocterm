@@ -4,7 +4,9 @@ import 'dart:convert';
 import 'package:nocterm/nocterm.dart';
 import 'package:nocterm/src/framework/terminal_canvas.dart';
 import 'package:nocterm/src/navigation/render_theater.dart';
+import 'package:nocterm/src/image/graphics_caps.dart';
 import 'package:nocterm/src/image/image_cleanup.dart';
+import 'package:nocterm/src/image/tty_winsize.dart';
 
 import '../backend/terminal.dart' as term;
 import '../buffer.dart' as buf;
@@ -49,6 +51,10 @@ class TerminalBinding extends NoctermBinding
   final _oscEventsController = StreamController<String>.broadcast();
   final _colorSchemeController =
       StreamController<ColorSchemeNotice>.broadcast();
+  final _terminalRepliesController = StreamController<String>.broadcast();
+
+  /// Probe for [GraphicsCaps]; null until [initialize] starts it.
+  GraphicsProbe? _graphicsProbe;
 
   /// Whether DEC private mode 2031 was enabled by [initialize].
   bool _colorSchemeUpdatesEnabled = false;
@@ -169,6 +175,13 @@ class TerminalBinding extends NoctermBinding
   Stream<ColorSchemeNotice> get colorSchemeNotices =>
       _colorSchemeController.stream;
 
+  /// Replies the terminal sent to queries — kitty graphics replies, DA1,
+  /// `CSI … t` reports — verbatim, in arrival order.
+  ///
+  /// Claimed by the input parser, so they never arrive as keystrokes. The
+  /// graphics probe started by [initialize] reads them from here.
+  Stream<String> get terminalReplies => _terminalRepliesController.stream;
+
   /// Whether colour-scheme change notifications were requested and the
   /// enabling escape sequence written.
   ///
@@ -183,7 +196,16 @@ class TerminalBinding extends NoctermBinding
   /// [colorSchemeNotices]). It is off by default: enabling it makes the
   /// terminal push reports onto the input stream, which is a behaviour
   /// change an app should ask for rather than inherit.
-  void initialize({bool enableColorSchemeUpdates = false}) {
+  ///
+  /// [probeGraphics] (on by default) asks the terminal for its
+  /// [GraphicsCaps] — kitty graphics support and cell pixel size — and
+  /// sets [GraphicsCaps.current] when it answers; the cell size is asked
+  /// again after every resize. The queries are ones every terminal either
+  /// answers or ignores.
+  void initialize({
+    bool enableColorSchemeUpdates = false,
+    bool probeGraphics = true,
+  }) {
     // Setup terminal
     terminal.enterAlternateScreen();
     terminal.hideCursor();
@@ -241,6 +263,41 @@ class TerminalBinding extends NoctermBinding
 
     // Start listening for termination signals
     _startSignalHandling();
+
+    // Ask the terminal what it can draw. Started after input handling so
+    // the replies are parsed (and kept off the keyboard path) by it.
+    if (probeGraphics) {
+      _startGraphicsProbe();
+    }
+  }
+
+  void _startGraphicsProbe() {
+    final probe = GraphicsProbe(
+      write: (data) {
+        terminal.write(data);
+        terminal.flush();
+      },
+      replies: terminalReplies,
+      // TIOCGWINSZ describes this process's own tty, which is the
+      // terminal only for the stdio backend.
+      winsize: terminal.backend is StdioBackend ? readTtyWinsize : null,
+    );
+    _graphicsProbe = probe;
+    probe.run().then(_applyGraphicsCaps);
+  }
+
+  void _reprobeCellSize() {
+    final probe = _graphicsProbe;
+    if (probe == null) return;
+    probe.reprobeCellSize(GraphicsCaps.current).then(_applyGraphicsCaps);
+  }
+
+  void _applyGraphicsCaps(GraphicsCaps caps) {
+    if (_shouldExit || caps == GraphicsCaps.current) return;
+    GraphicsCaps.current = caps;
+    // Images lay out and pick a protocol from the caps; redraw everything.
+    _previousBuffer = null;
+    scheduleFrame();
   }
 
   void _startInputHandling() {
@@ -332,6 +389,11 @@ class TerminalBinding extends NoctermBinding
           // tree as a key.
           if (!_colorSchemeController.isClosed) {
             _colorSchemeController.add(event.notice);
+          }
+        } else if (event is TerminalReplyInputEvent) {
+          // Answer to a terminal query (graphics probe). Never a key.
+          if (!_terminalRepliesController.isClosed) {
+            _terminalRepliesController.add(event.reply);
           }
         }
       }
@@ -535,6 +597,8 @@ class TerminalBinding extends NoctermBinding
           // Clear previous buffer to force full redraw on resize
           _previousBuffer = null;
           scheduleFrame();
+          // A font zoom resizes the window AND the cells; re-measure.
+          _reprobeCellSize();
         }
       });
     }
@@ -610,6 +674,9 @@ class TerminalBinding extends NoctermBinding
     } catch (_) {}
     try {
       _colorSchemeController.close();
+    } catch (_) {}
+    try {
+      _terminalRepliesController.close();
     } catch (_) {}
 
     // Stop hot reload if it was initialized
@@ -824,6 +891,9 @@ class TerminalBinding extends NoctermBinding
     } catch (_) {}
     try {
       _colorSchemeController.close();
+    } catch (_) {}
+    try {
+      _terminalRepliesController.close();
     } catch (_) {}
 
     // Wake up event loop one last time before closing
