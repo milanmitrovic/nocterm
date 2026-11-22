@@ -37,12 +37,6 @@ class KittyEncoder {
   /// Maximum chunk size for base64 data (must be multiple of 4)
   static const int _maxChunkSize = 4096;
 
-  /// Global counter for generating unique image IDs
-  static int _nextImageId = 1;
-
-  /// Get the next unique image ID.
-  static int getNextImageId() => _nextImageId++;
-
   /// Delete an image by its ID.
   ///
   /// [imageId] - The image ID to delete. If null, deletes all images.

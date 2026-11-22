@@ -1,5 +1,3 @@
-import 'package:nocterm/src/image/kitty_encoder.dart';
-
 /// Available image display protocols.
 enum ImageProtocol {
   /// Unicode half-block characters (universal fallback).
@@ -15,25 +13,19 @@ enum ImageProtocol {
   kitty,
 }
 
-/// Callback type for writing escape sequences to the terminal.
-typedef TerminalWriter = void Function(String data);
-
-/// Manages cleanup of terminal images when components are unmounted.
+/// Manages cleanup of sixel and iTerm2 images when they move or unmount.
 ///
-/// This class handles the complexity of cleaning up images across different
-/// terminal graphics protocols:
-///
-/// - **Kitty**: Uses native delete commands with image IDs
-/// - **Sixel/iTerm2**: Overwrites image region with spaces (scheduled for next frame)
-/// - **Unicode blocks**: No cleanup needed (cells are just overwritten)
+/// Those protocols have no delete command, so a vacated region is
+/// overwritten with spaces on the next frame. Kitty images need none of
+/// this: the binding's KittyPlacer deletes a placement when it leaves the
+/// frame. Unicode blocks are plain cells, overwritten naturally.
 ///
 /// Usage:
 /// ```dart
 /// // When rendering an image, register it:
 /// final registration = ImageCleanupManager.instance.registerImage(
 ///   x: 0, y: 0, width: 10, height: 5,
-///   protocol: ImageProtocol.kitty,
-///   kittyImageId: 42,
+///   protocol: ImageProtocol.sixel,
 /// );
 ///
 /// // When disposing the image render object:
@@ -44,19 +36,9 @@ class ImageCleanupManager {
 
   static final ImageCleanupManager instance = ImageCleanupManager._();
 
-  /// Terminal writer callback (set by the binding).
-  TerminalWriter? _terminalWriter;
-
   /// Pending regions that need to be cleared with spaces.
   /// These are processed during the next frame.
   final List<ImageRegion> _pendingCleanups = [];
-
-  /// Set the terminal writer callback.
-  ///
-  /// This should be called by the binding during initialization.
-  void setTerminalWriter(TerminalWriter writer) {
-    _terminalWriter = writer;
-  }
 
   /// Register an image for cleanup tracking.
   ///
@@ -68,13 +50,11 @@ class ImageCleanupManager {
     required int width,
     required int height,
     required ImageProtocol protocol,
-    int? kittyImageId,
   }) {
     return ImageRegistration._(
       manager: this,
       region: ImageRegion(x: x, y: y, width: width, height: height),
       protocol: protocol,
-      kittyImageId: kittyImageId,
     );
   }
 
@@ -91,28 +71,14 @@ class ImageCleanupManager {
   /// Check if there are pending cleanups.
   bool get hasPendingCleanups => _pendingCleanups.isNotEmpty;
 
-  void _cleanupKitty(int imageId) {
-    final writer = _terminalWriter;
-    if (writer != null) {
-      writer(KittyEncoder.delete(imageId: imageId));
-    }
-  }
-
   void _scheduleSpaceCleanup(ImageRegion region) {
     _pendingCleanups.add(region);
   }
 
-  /// Clear all images from the terminal.
-  ///
-  /// This should be called during shutdown to ensure no images are left
-  /// on the screen when the TUI exits.
+  /// Drop pending cleanups at shutdown: leaving the alternate screen
+  /// takes the regions with it. (Kitty images are freed by the binding's
+  /// KittyPlacer.)
   void clearAllImages() {
-    final writer = _terminalWriter;
-    if (writer != null) {
-      // Delete all Kitty images (no image ID = delete all)
-      writer(KittyEncoder.delete());
-    }
-    // Clear any pending cleanups since we're shutting down
     _pendingCleanups.clear();
   }
 }
@@ -123,13 +89,11 @@ class ImageRegistration {
     required ImageCleanupManager manager,
     required this.region,
     required this.protocol,
-    this.kittyImageId,
   }) : _manager = manager;
 
   final ImageCleanupManager _manager;
   final ImageRegion region;
   final ImageProtocol protocol;
-  final int? kittyImageId;
 
   bool _disposed = false;
 
@@ -140,13 +104,10 @@ class ImageRegistration {
     required int width,
     required int height,
   }) {
-    // For Kitty, we don't need to do anything special on move
-    // The new registration will handle cleanup
     return ImageRegistration._(
       manager: _manager,
       region: ImageRegion(x: x, y: y, width: width, height: height),
       protocol: protocol,
-      kittyImageId: kittyImageId,
     );
   }
 
@@ -156,18 +117,14 @@ class ImageRegistration {
     _disposed = true;
 
     switch (protocol) {
-      case ImageProtocol.kitty:
-        if (kittyImageId != null) {
-          _manager._cleanupKitty(kittyImageId!);
-        }
-        break;
-
       case ImageProtocol.sixel:
       case ImageProtocol.iterm2:
         // Schedule space overwrite for next frame
         _manager._scheduleSpaceCleanup(region);
         break;
 
+      case ImageProtocol.kitty:
+        // The binding's KittyPlacer deletes placements that leave the frame.
       case ImageProtocol.unicodeBlocks:
         // Unicode blocks are just text cells, they get overwritten naturally
         break;

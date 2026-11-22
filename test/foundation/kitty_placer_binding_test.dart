@@ -138,7 +138,7 @@ void main() {
     addTearDown(() => GraphicsCaps.current = GraphicsCaps.unknown);
 
     binding.attachRootComponent(const _App());
-    binding.executeFrame();
+    binding.scheduleFrame();
     await _settle();
 
     var out = backend.output.toString();
@@ -152,7 +152,7 @@ void main() {
     _label.value = 'two';
     await _settle();
     out = backend.output.toString();
-    expect(out, contains('two'), reason: 'the frame did render');
+    expect(out, contains('\x1b[1;1Ht'), reason: 'the frame did render');
     expect(_count(out, 'a=t'), 0);
     expect(_count(out, 'a=p'), 0);
 

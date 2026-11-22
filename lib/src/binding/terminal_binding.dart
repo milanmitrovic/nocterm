@@ -6,6 +6,7 @@ import 'package:nocterm/src/framework/terminal_canvas.dart';
 import 'package:nocterm/src/navigation/render_theater.dart';
 import 'package:nocterm/src/image/graphics_caps.dart';
 import 'package:nocterm/src/image/image_cleanup.dart';
+import 'package:nocterm/src/image/kitty_placer.dart';
 import 'package:nocterm/src/image/tty_winsize.dart';
 
 import '../backend/terminal.dart' as term;
@@ -61,6 +62,10 @@ class TerminalBinding extends NoctermBinding
 
   /// Previous frame's buffer for differential rendering.
   buf.Buffer? _previousBuffer;
+
+  /// Sends each frame's kitty image placements: images once, places only
+  /// when something moved.
+  final KittyPlacer _kittyPlacer = KittyPlacer();
 
   // Event-driven loop support
   final _eventLoopController = StreamController<void>.broadcast();
@@ -211,12 +216,6 @@ class TerminalBinding extends NoctermBinding
     terminal.hideCursor();
     terminal.bindOSCStream(_oscEventsController.stream);
     terminal.clear();
-
-    // Initialize image cleanup manager with terminal writer
-    ImageCleanupManager.instance.setTerminalWriter((data) {
-      terminal.write(data);
-      terminal.flush();
-    });
 
     // Enable mouse tracking (SGR mode for better coordinate support)
     // ESC [ ? 1000 h - Send Mouse X & Y on button press and release
@@ -684,9 +683,10 @@ class TerminalBinding extends NoctermBinding
       shutdownWithHotReload();
     } catch (_) {}
 
-    // Clear all images before leaving alternate screen
+    // Free this session's kitty images before leaving alternate screen
     try {
       ImageCleanupManager.instance.clearAllImages();
+      terminal.backend.writeRaw(_kittyPlacer.clearAll());
     } catch (_) {}
 
     // Perform terminal cleanup synchronously
@@ -907,6 +907,10 @@ class TerminalBinding extends NoctermBinding
 
     // Try to cleanup terminal, but handle errors gracefully
     try {
+      // Free this session's kitty images before leaving alternate screen
+      ImageCleanupManager.instance.clearAllImages();
+      terminal.backend.writeRaw(_kittyPlacer.clearAll());
+
       // IMPORTANT: Disable mouse tracking and bracketed paste BEFORE leaving alternate screen
       // This ensures the terminal properly processes the disable commands
       terminal.backend.writeRaw(EscapeCodes.disable.motionTracking);
@@ -1050,10 +1054,9 @@ class TerminalBinding extends NoctermBinding
           continue;
         }
 
-        // Skip image placeholder cells - these will be rendered via sixel
-        if (cell.isImagePlaceholder) {
-          continue;
-        }
+        // Image placeholder cells are written like any other: a kitty
+        // image's cells hold its half-block preview (drawn under the
+        // placement), a sixel region's hold spaces the sixel covers.
 
         // Cell changed - move cursor and write
         terminal.moveCursor(x, y);
@@ -1103,8 +1106,8 @@ class TerminalBinding extends NoctermBinding
       terminal.writeHyperlink(null);
     }
 
-    // Render pending sixel images
     _renderPendingImages(buffer);
+    terminal.write(_kittyPlacer.flush(buffer.imagePlacements));
 
     terminal.flush();
   }
@@ -1124,16 +1127,6 @@ class TerminalBinding extends NoctermBinding
 
         // Skip zero-width space markers (used for wide character tracking)
         if (cell.char == '\u200B') {
-          continue;
-        }
-
-        // Skip image placeholder cells - write space to maintain positioning
-        if (cell.isImagePlaceholder) {
-          if (currentStyle != null) {
-            terminal.write(TextStyle.reset);
-            currentStyle = null;
-          }
-          terminal.write(' ');
           continue;
         }
 
@@ -1183,8 +1176,10 @@ class TerminalBinding extends NoctermBinding
       terminal.writeHyperlink(null);
     }
 
-    // Render pending sixel images
     _renderPendingImages(buffer);
+    // The clear above dropped every kitty placement: place them all again
+    // (the images themselves stay stored in the terminal).
+    terminal.write(_kittyPlacer.flush(buffer.imagePlacements, fullRedraw: true));
 
     terminal.flush();
   }
@@ -1256,7 +1251,7 @@ class TerminalBinding extends NoctermBinding
     return (value * 100 / total).toStringAsFixed(1);
   }
 
-  /// Renders all pending sixel images from the buffer.
+  /// Renders all pending sixel/iTerm2 images from the buffer.
   void _renderPendingImages(buf.Buffer buffer) {
     // First, clear any regions that need cleanup (from unmounted images)
     final cleanups = ImageCleanupManager.instance.consumePendingCleanups();
