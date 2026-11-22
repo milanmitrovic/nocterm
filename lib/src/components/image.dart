@@ -10,7 +10,6 @@ import 'package:nocterm/src/image/color_quantizer.dart';
 import 'package:nocterm/src/image/graphics_caps.dart';
 import 'package:nocterm/src/image/image_cleanup.dart';
 import 'package:nocterm/src/image/iterm2_encoder.dart';
-import 'package:nocterm/src/image/kitty_placer.dart';
 import 'package:nocterm/src/image/sixel_encoder.dart';
 import 'package:nocterm/src/image/unicode_block_encoder.dart';
 

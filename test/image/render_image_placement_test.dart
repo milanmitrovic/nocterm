@@ -5,7 +5,6 @@ import 'package:nocterm/nocterm.dart' hide isNotEmpty, isEmpty;
 import 'package:nocterm/src/components/image.dart' as img;
 import 'package:nocterm/src/framework/terminal_canvas.dart';
 import 'package:nocterm/src/image/graphics_caps.dart';
-import 'package:nocterm/src/image/kitty_placer.dart';
 import 'package:test/test.dart';
 
 const _kitty =

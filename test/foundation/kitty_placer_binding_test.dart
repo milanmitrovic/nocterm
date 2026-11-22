@@ -6,7 +6,6 @@ import 'dart:typed_data';
 import 'package:nocterm/nocterm.dart' hide isEmpty;
 import 'package:nocterm/src/components/image.dart' as img;
 import 'package:nocterm/src/image/graphics_caps.dart';
-import 'package:nocterm/src/image/kitty_placer.dart';
 import 'package:test/test.dart';
 
 /// Fake tty: records writes and lets the test resize the window.

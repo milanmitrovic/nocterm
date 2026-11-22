@@ -101,6 +101,8 @@ export 'src/components/modal_barrier.dart';
 // Image support
 export 'src/components/image.dart';
 export 'src/image/image_cleanup.dart' show ImageProtocol;
+export 'src/image/kitty_placer.dart'
+    show ImagePlacement, KittyImage, KittyPlacer, kittyImageId;
 
 // Text Selection
 export 'src/components/selection_area.dart';
