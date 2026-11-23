@@ -28,8 +28,10 @@ ImagePlacement _at(KittyImage image, int placementId, int x, int y,
       rows: rows,
     );
 
+/// A placement asks for errors only (`q=1`): OK stays quiet, but a
+/// failure — the terminal evicted the image — is reported.
 String _place(int id, int pid, int columns, int rows) =>
-    '${_apc}a=p,i=$id,p=$pid,c=$columns,r=$rows,C=1,q=2$_st';
+    '${_apc}a=p,i=$id,p=$pid,c=$columns,r=$rows,C=1,q=1$_st';
 
 String _delete(int id, int pid) => '${_apc}a=d,d=i,i=$id,p=$pid,q=2$_st';
 
@@ -218,6 +220,80 @@ void main() {
       expect(cleared, contains('${_apc}a=d,d=I,i=${b.id},q=2$_st'));
       expect(placer.clearAll(), '');
       expect(_transmits(placer.flush([_at(a, 1, 0, 0)])), 1);
+    });
+  });
+
+  group('KittyPlacer.handleReply (the terminal evicted an image)', () {
+    String enoent(int id, int pid) =>
+        '${_apc}i=$id,p=$pid;ENOENT:No image with id: $id$_st';
+
+    test('ENOENT for a placed image: the next flush sends and places it again',
+        () {
+      final placer = KittyPlacer();
+      final a = _image(40, 20);
+      final b = _image(40, 20, level: 9);
+      final frame = [_at(a, 1, 0, 0), _at(b, 2, 0, 10)];
+      placer.flush(frame);
+
+      expect(placer.handleReply(enoent(a.id, 1)), isTrue,
+          reason: 'state changed: a flush is owed');
+
+      final out = placer.flush(frame);
+      expect(_controls(out).where((c) => c.startsWith('a=t')),
+          ['a=t,f=100,i=${a.id},q=2,m=0'],
+          reason: 'a re-sent, b (still stored) not');
+      expect(out, contains('\x1b[1;1H${_place(a.id, 1, 10, 4)}'));
+      expect(out, isNot(contains('a=p,i=${b.id},')));
+    });
+
+    test('an image re-sent this way comes back after a full flush too', () {
+      final placer = KittyPlacer();
+      final a = _image(40, 20);
+      placer.flush([_at(a, 1, 0, 0)]);
+      placer.handleReply(enoent(a.id, 1));
+      placer.flush([_at(a, 1, 0, 0)]);
+
+      // Stored again: an unchanged frame writes nothing.
+      expect(placer.flush([_at(a, 1, 0, 0)]), '');
+    });
+
+    for (final (name, reply) in [
+      ('an OK', '${_apc}i=7;OK$_st'),
+      ('another error', '${_apc}i=7;EINVAL:bad$_st'),
+      ('a DA1 reply', '\x1b[?62;22c'),
+      ('the graphics probe\'s reply', '${_apc}i=31;OK$_st'),
+    ]) {
+      test('$name changes nothing', () {
+        final placer = KittyPlacer();
+        final a = _image(40, 20);
+        placer.flush([_at(a, 1, 0, 0)]);
+
+        expect(placer.handleReply(reply), isFalse);
+        expect(placer.flush([_at(a, 1, 0, 0)]), '');
+      });
+    }
+
+    test('ENOENT for an id this placer never sent changes nothing', () {
+      final placer = KittyPlacer();
+      final a = _image(40, 20);
+      placer.flush([_at(a, 1, 0, 0)]);
+
+      expect(placer.handleReply(enoent(a.id ^ 1, 1)), isFalse);
+      expect(placer.flush([_at(a, 1, 0, 0)]), '');
+    });
+
+    test('an image the terminal keeps refusing is re-sent a few times only',
+        () {
+      final placer = KittyPlacer();
+      final a = _image(40, 20);
+      final frame = [_at(a, 1, 0, 0)];
+      placer.flush(frame);
+      var resends = 0;
+      for (var i = 0; i < 10; i++) {
+        if (!placer.handleReply(enoent(a.id, 1))) break;
+        resends += _transmits(placer.flush(frame));
+      }
+      expect(resends, KittyPlacer.maxResends);
     });
   });
 }

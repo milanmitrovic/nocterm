@@ -163,6 +163,24 @@ void main() {
     expect(_count(out, 'a=p,i=$id,'), 1);
     expect(_count(out, 'a=t'), 0);
 
+    // The terminal evicted the image (kitty's storage quota): the
+    // placement's error reply (q=1) makes the binding send it again and
+    // place it, without waiting for anything else to repaint.
+    expect(out, contains(',C=1,q=1'), reason: 'placements ask for errors');
+    backend.output.clear();
+    backend.input.add(
+        utf8.encode('\x1b_Gi=$id,p=1;ENOENT:No image with id: $id\x1b\\'));
+    await _settle();
+    out = backend.output.toString();
+    expect(_count(out, 'a=t,f=100,i=$id,'), 1, reason: 're-sent');
+    expect(_count(out, 'a=p,i=$id,'), 1, reason: 'placed again');
+
+    // A reply for an image it never sent is ignored.
+    backend.output.clear();
+    backend.input.add(utf8.encode('\x1b_Gi=99;ENOENT:No image\x1b\\'));
+    await _settle();
+    expect(_count(backend.output.toString(), 'a=t'), 0);
+
     // The image leaves the tree: its placement is deleted, data kept.
     backend.output.clear();
     _showImage.value = false;
