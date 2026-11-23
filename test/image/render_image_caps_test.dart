@@ -2,7 +2,6 @@ import 'dart:typed_data';
 
 import 'package:nocterm/nocterm.dart' hide isNotEmpty;
 import 'package:nocterm/src/components/image.dart' as img;
-import 'package:nocterm/src/image/graphics_caps.dart';
 import 'package:test/test.dart';
 
 img.ImageData _image(int width, int height) => img.ImageData(

@@ -100,6 +100,7 @@ export 'src/components/modal_barrier.dart';
 
 // Image support
 export 'src/components/image.dart';
+export 'src/image/graphics_caps.dart' show CellPixelSize, GraphicsCaps;
 export 'src/image/image_cleanup.dart' show ImageProtocol;
 export 'src/image/kitty_placer.dart'
     show ImagePlacement, KittyImage, KittyPlacer, kittyImageId;
