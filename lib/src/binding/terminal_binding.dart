@@ -290,6 +290,17 @@ class TerminalBinding extends NoctermBinding
     probe.reprobeCellSize(GraphicsCaps.current).then(_applyGraphicsCaps);
   }
 
+  /// The terminal reported an image this session sent as gone (kitty
+  /// evicts stored images over its quota): send and place it again over
+  /// the frame on screen. Not a frame — nothing in the tree changed, so a
+  /// scheduled frame would find nothing dirty and skip the flush.
+  void _replaceEvictedImages() {
+    final shown = _previousBuffer;
+    if (shown == null || _shouldExit) return;
+    terminal.write(_kittyPlacer.flush(shown.imagePlacements));
+    terminal.flush();
+  }
+
   void _applyGraphicsCaps(GraphicsCaps caps) {
     if (_shouldExit || caps == GraphicsCaps.current) return;
     GraphicsCaps.current = caps;
@@ -389,10 +400,12 @@ class TerminalBinding extends NoctermBinding
             _colorSchemeController.add(event.notice);
           }
         } else if (event is TerminalReplyInputEvent) {
-          // Answer to a terminal query (graphics probe). Never a key.
+          // Answer to a terminal query (graphics probe), or a kitty
+          // placement's error. Never a key.
           if (!_terminalRepliesController.isClosed) {
             _terminalRepliesController.add(event.reply);
           }
+          if (_kittyPlacer.handleReply(event.reply)) _replaceEvictedImages();
         }
       }
 

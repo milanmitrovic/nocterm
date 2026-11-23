@@ -134,7 +134,10 @@ class ImagePlacement {
 /// - a placement that is new, moved or resized is placed (`a=p`) at its
 ///   cell — the same `i`/`p` replaces the old one;
 /// - a placement gone from the frame is deleted with `d=i`, which keeps the
-///   image data for when it comes back.
+///   image data for when it comes back;
+/// - placements ask for errors only (`q=1`): when the terminal has evicted
+///   an image (kitty's storage quota), its `ENOENT` reply goes to
+///   [handleReply], and the next flush sends and places it again.
 ///
 /// Direct placement only: never unicode placeholders (`U=1`), never sixel.
 class KittyPlacer {
@@ -147,8 +150,39 @@ class KittyPlacer {
     return id;
   }
 
+  /// How many times one image is re-sent after the terminal reported it
+  /// gone, per session — a terminal that drops it straight away again
+  /// (an image over its quota) is not fed it every frame.
+  static const maxResends = 3;
+
   final Set<int> _transmitted = {};
   final Map<(int, int), ImagePlacement> _live = {};
+  final Map<int, int> _resends = {};
+
+  static final _reply = RegExp(r'^\x1b_G([^;\x1b]*);([^\x1b]*)\x1b\\$');
+
+  /// Reads a terminal reply. An `ENOENT` for an image this placer sent
+  /// means the terminal no longer has it: it is marked unsent and its
+  /// placements forgotten, so the next [flush] transmits and places it
+  /// again. Returns whether that happened — the caller owes a flush.
+  ///
+  /// Every other reply (an OK, another error, a DA1, the graphics probe's)
+  /// changes nothing, and so does an image re-sent [maxResends] times.
+  bool handleReply(String reply) {
+    final m = _reply.firstMatch(reply);
+    if (m == null || !m.group(2)!.startsWith('ENOENT')) return false;
+    int? id;
+    for (final kv in m.group(1)!.split(',')) {
+      if (kv.startsWith('i=')) id = int.tryParse(kv.substring(2));
+    }
+    if (id == null || !_transmitted.contains(id)) return false;
+    final resends = _resends[id] ?? 0;
+    if (resends >= maxResends) return false;
+    _resends[id] = resends + 1;
+    _transmitted.remove(id);
+    _live.removeWhere((key, _) => key.$1 == id);
+    return true;
+  }
 
   /// The commands that take the terminal from the last frame's placements
   /// to [placements].
@@ -182,6 +216,7 @@ class KittyPlacer {
           placementId: p.placementId,
           columns: p.columns,
           rows: p.rows,
+          quiet: 1,
         ));
       }
     }
@@ -201,6 +236,7 @@ class KittyPlacer {
     }
     _transmitted.clear();
     _live.clear();
+    _resends.clear();
     return out.toString();
   }
 }
